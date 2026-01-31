@@ -1,4 +1,3 @@
-```python
 """
 NYC Housing Lottery Finder
 A Streamlit app to browse, map, and analyze NYC affordable housing lotteries
