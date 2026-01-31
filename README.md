@@ -9,11 +9,22 @@ A mobile-friendly Streamlit application for exploring affordable housing lottery
 ## Features
 
 - 🗺️ **Interactive Map View**: Visualize lottery locations across NYC with color-coded markers
-- 📋 **Calendar List View**: Browse lotteries in a card-based format sorted by date
-- 🔍 **Advanced Filtering**: Filter by borough, lottery status, and date range
+- 📋 **Calendar List View**: Browse lotteries with Card, Detailed, or Table view modes
+- 🔍 **Advanced Filtering**: Filter by borough, lottery status, date range, and development type
 - 📊 **Summary Statistics**: Quick overview of total lotteries, open opportunities, and units
 - 📱 **Mobile-Friendly**: Responsive design optimized for all devices
 - 🔄 **Real-Time Data**: Pulls directly from NYC Open Data API
+
+### Analytics Tabs
+- 🏢 **Unit Distribution Analysis**: Charts and data for unit sizes (Studio, 1BR, 2BR, 3BR, 4BR+)
+- 💰 **AMI Category Analysis**: Breakdown by income eligibility (Extremely Low to Above Middle Income)
+- 📊 **Lottery Preferences Analysis**: Preference percentages for special populations (Mobility, Vision/Hearing, Community Board, Municipal/Veteran, NYCHA, Senior)
+
+### Data Features
+- 📖 **30 Data Fields**: Complete column reference with descriptions
+- 🔄 **Independent Tab Filters**: Each analytics tab has its own filter controls
+- 📥 **CSV Download**: Export filtered data from any view or analytics tab
+- 📋 **Detailed View Mode**: Expandable cards showing all 30 data fields per lottery
 
 ## Screenshots
 
