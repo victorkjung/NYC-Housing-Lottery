@@ -356,19 +356,19 @@ def filter_data(
     """
     filtered = df.copy()
     
-    if borough and borough != "All Boroughs":
+    if borough and borough != "All Boroughs" and 'borough' in filtered.columns:
         filtered = filtered[filtered['borough'].str.upper() == borough.upper()]
     
-    if status and status != "All Statuses":
+    if status and status != "All Statuses" and 'lottery_status' in filtered.columns:
         filtered = filtered[filtered['lottery_status'].str.contains(status, case=False, na=False)]
     
-    if development_type and development_type != "All Types":
+    if development_type and development_type != "All Types" and 'development_type' in filtered.columns:
         filtered = filtered[filtered['development_type'].str.contains(development_type, case=False, na=False)]
     
-    if start_date:
+    if start_date and 'lottery_end_date' in filtered.columns:
         filtered = filtered[filtered['lottery_end_date'] >= pd.Timestamp(start_date)]
     
-    if end_date:
+    if end_date and 'lottery_start_date' in filtered.columns:
         filtered = filtered[filtered['lottery_start_date'] <= pd.Timestamp(end_date)]
     
     return filtered
