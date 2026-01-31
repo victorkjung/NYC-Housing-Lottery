@@ -456,8 +456,8 @@ def display_detailed_lottery_info(row: pd.Series) -> None:
         with col2:
             st.markdown("#### Unit Distribution")
             resolved_units = resolve_unit_distribution_columns(pd.DataFrame([row]))
-            for _, (colname, label) in resolved_units.items():
-                if colname and colname in row.index:
+            for key, (colname, label) in resolved_units.items():
+                if colname is not None and colname in row.index:
                     val = row.get(colname, 0)
                 else:
                     val = 0
@@ -478,7 +478,7 @@ def display_detailed_lottery_info(row: pd.Series) -> None:
             if not resolved_ami:
                 st.info("AMI category fields are not present for this record.")
             else:
-                for _, (colname, label) in resolved_ami.items():
+                for key, (colname, label) in resolved_ami.items():
                     val = row.get(colname, 0)
                     val = 0 if pd.isna(val) else val
                     st.markdown(f"**{label}:** {int(float(val))}")
@@ -488,7 +488,7 @@ def display_detailed_lottery_info(row: pd.Series) -> None:
             if not resolved_pct:
                 st.info("Preference % fields are not present for this record.")
             else:
-                for _, (colname, label) in resolved_pct.items():
+                for key, (colname, label) in resolved_pct.items():
                     val = row.get(colname, 0)
                     val = 0 if pd.isna(val) else val
                     st.markdown(f"**{label}:** {float(val):.1f}%")
@@ -523,8 +523,8 @@ def render_unit_distribution_tab(df: pd.DataFrame) -> None:
     # ✅ Always resolve all 5 sizes; missing columns become zeros
     resolved = resolve_unit_distribution_columns(filtered)
 
-    # Always show all five sizes in the filter
-    all_labels = [label for (_, label) in resolved.values()]
+    # Always show all five sizes in the filter - extract labels correctly
+    all_labels = [label for (actual_col, label) in resolved.values()]
     selected_labels = st.multiselect(
         "Unit sizes to include",
         options=all_labels,
@@ -541,16 +541,17 @@ def render_unit_distribution_tab(df: pd.DataFrame) -> None:
         key="ud_include_zeros_in_charts",
     )
 
-    # Build label->actual map (actual may be None)
-    label_to_actual: Dict[str, Optional[str]] = {}
-    for _, (actual, label) in resolved.items():
-        label_to_actual[label] = actual
+    # ✅ FIXED: Build label->actual map correctly from resolved values
+    # resolved.values() returns tuples of (actual_col_or_None, label)
+    label_to_actual: Dict[str, Optional[str]] = {
+        label: actual_col for (actual_col, label) in resolved.values()
+    }
 
     # Totals (missing columns => 0)
     totals: Dict[str, float] = {}
     for lbl in selected_labels:
         actual = label_to_actual.get(lbl)
-        if actual and actual in filtered.columns:
+        if actual is not None and actual in filtered.columns:
             totals[lbl] = safe_numeric_sum(filtered[actual])
         else:
             totals[lbl] = 0.0
@@ -574,7 +575,7 @@ def render_unit_distribution_tab(df: pd.DataFrame) -> None:
         summary_df["Share"] = "0.0%"
 
     st.markdown("#### Summary")
-    st.dataframe(summary_df, width="stretch", height=230)
+    st.dataframe(summary_df, use_container_width=True, height=230)
 
     # Prepare chart dataframe (optionally drop zeros)
     chart_df = summary_df.copy()
@@ -596,7 +597,7 @@ def render_unit_distribution_tab(df: pd.DataFrame) -> None:
                     hole=0.35,
                 )
                 fig_pie.update_traces(textposition="inside", textinfo="percent+label")
-                st.plotly_chart(fig_pie, width="stretch")
+                st.plotly_chart(fig_pie, use_container_width=True)
 
         if chart_mode in ("Both", "Bar"):
             with (chart_col2 if chart_mode == "Both" else chart_col1):
@@ -608,18 +609,18 @@ def render_unit_distribution_tab(df: pd.DataFrame) -> None:
                     labels={"Units": "Number of Units"},
                 )
                 fig_bar.update_layout(showlegend=False)
-                st.plotly_chart(fig_bar, width="stretch")
+                st.plotly_chart(fig_bar, use_container_width=True)
 
     # Detailed table: always show all five columns (computed if missing)
     st.markdown("#### Detailed Data")
     base_cols = [c for c in ["lottery_name", "borough", "lottery_status", "development_type"] if c in filtered.columns]
     display_df = filtered[base_cols].copy()
 
-    # Add computed columns for each selected label
+    # ✅ FIXED: Add computed columns for each selected label using corrected label_to_actual
     for lbl in selected_labels:
         actual = label_to_actual.get(lbl)
         out_col = f"{lbl} Units"
-        if actual and actual in filtered.columns:
+        if actual is not None and actual in filtered.columns:
             display_df[out_col] = pd.to_numeric(filtered[actual], errors="coerce").fillna(0).astype(int)
         else:
             display_df[out_col] = 0
@@ -633,7 +634,7 @@ def render_unit_distribution_tab(df: pd.DataFrame) -> None:
     }
     display_df = display_df.rename(columns=rename_map)
 
-    st.dataframe(display_df, width="stretch", height=350)
+    st.dataframe(display_df, use_container_width=True, height=350)
     st.download_button(
         "📥 Download Unit Distribution Data (CSV)",
         data=convert_df_to_csv(display_df),
@@ -646,6 +647,8 @@ def render_unit_distribution_tab(df: pd.DataFrame) -> None:
     with st.expander("🔎 Diagnostics (optional)"):
         st.caption("If unit sizes are all 0, the dataset response may not contain those fields or they may be empty.")
         st.write("Detected unit-related columns:", detect_related_columns(filtered, ["unit", "bed", "studio"]))
+        st.write("Resolved mapping (key -> (actual_col, label)):")
+        st.json({k: {"actual_col": v[0], "label": v[1]} for k, v in resolved.items()})
 
 
 def render_ami_category_tab(df: pd.DataFrame) -> None:
@@ -693,9 +696,14 @@ def render_ami_category_tab(df: pd.DataFrame) -> None:
             st.code(", ".join(candidates)[:2000])
         return
 
-    labels = [label for (_, label) in resolved.values()]
+    # ✅ FIXED: Extract labels correctly from resolved values
+    labels = [label for (actual_col, label) in resolved.values()]
     selected = st.multiselect("AMI categories to include", labels, default=labels, key="ami_select")
-    label_to_actual = {label: actual for (_, (actual, label)) in resolved.items()}
+    
+    # ✅ FIXED: Build label_to_actual correctly
+    label_to_actual: Dict[str, str] = {
+        label: actual_col for (actual_col, label) in resolved.values()
+    }
 
     totals: Dict[str, float] = {}
     for lbl in selected:
@@ -714,19 +722,19 @@ def render_ami_category_tab(df: pd.DataFrame) -> None:
         .reset_index(drop=True)
     )
     st.markdown("#### Summary")
-    st.dataframe(summary_df, width="stretch", height=230)
+    st.dataframe(summary_df, use_container_width=True, height=230)
 
     chart_col1, chart_col2 = st.columns(2)
 
     with chart_col1:
         fig = px.pie(summary_df, values="Units", names="AMI Category", title="Units by AMI Category", hole=0.35)
         fig.update_traces(textposition="inside", textinfo="percent+label")
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
 
     with chart_col2:
         figb = px.bar(summary_df, x="AMI Category", y="Units", title="Total Units by AMI Category")
         figb.update_layout(showlegend=False, xaxis_tickangle=-30)
-        st.plotly_chart(figb, width="stretch")
+        st.plotly_chart(figb, use_container_width=True)
 
     st.markdown("#### AMI Distribution Over Time")
     if "lottery_start_date" in filtered.columns:
@@ -746,7 +754,7 @@ def render_ami_category_tab(df: pd.DataFrame) -> None:
                 if len(tg) > 1:
                     figl = px.line(tg, x="Period", y=[c for c in tg.columns if c != "Period"], title="AMI Trends Over Time", markers=True)
                     figl.update_layout(xaxis_tickangle=-45)
-                    st.plotly_chart(figl, width="stretch")
+                    st.plotly_chart(figl, use_container_width=True)
                 else:
                     st.info("Not enough time periods to display a trend.")
         else:
@@ -766,7 +774,7 @@ def render_ami_category_tab(df: pd.DataFrame) -> None:
             rename_map[col] = lbl
     display_df = display_df.rename(columns=rename_map)
 
-    st.dataframe(display_df, width="stretch", height=320)
+    st.dataframe(display_df, use_container_width=True, height=320)
     st.download_button(
         "📥 Download AMI Category Data (CSV)",
         data=convert_df_to_csv(display_df),
@@ -821,9 +829,14 @@ NYC Housing Lotteries may reserve percentages of units for:
             st.code(", ".join(candidates)[:2000])
         return
 
-    labels = [label for (_, label) in resolved.values()]
+    # ✅ FIXED: Extract labels correctly from resolved values
+    labels = [label for (actual_col, label) in resolved.values()]
     selected = st.multiselect("Preferences to include", labels, default=labels, key="lp_select")
-    label_to_actual = {label: actual for (_, (actual, label)) in resolved.items()}
+    
+    # ✅ FIXED: Build label_to_actual correctly
+    label_to_actual: Dict[str, str] = {
+        label: actual_col for (actual_col, label) in resolved.values()
+    }
 
     avgs: Dict[str, float] = {}
     for lbl in selected:
@@ -844,19 +857,19 @@ NYC Housing Lotteries may reserve percentages of units for:
     )
 
     st.markdown("#### Summary")
-    st.dataframe(summary_df, width="stretch", height=230)
+    st.dataframe(summary_df, use_container_width=True, height=230)
 
     chart_col1, chart_col2 = st.columns(2)
 
     with chart_col1:
         fig = px.pie(summary_df, values="Avg %", names="Preference", title="Average Preference % (Share)", hole=0.35)
         fig.update_traces(textposition="inside", textinfo="percent+label")
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
 
     with chart_col2:
         figb = px.bar(summary_df, x="Preference", y="Avg %", title="Average Preference %", labels={"Avg %": "Average %"})
         figb.update_layout(showlegend=False, xaxis_tickangle=-30)
-        st.plotly_chart(figb, width="stretch")
+        st.plotly_chart(figb, use_container_width=True)
 
     st.markdown("#### Detailed Data")
     base_cols = [c for c in ["lottery_name", "borough", "lottery_status", "development_type"] if c in filtered.columns]
@@ -870,7 +883,7 @@ NYC Housing Lotteries may reserve percentages of units for:
             rename_map[col] = f"{lbl} %"
     display_df = display_df.rename(columns=rename_map)
 
-    st.dataframe(display_df, width="stretch", height=320)
+    st.dataframe(display_df, use_container_width=True, height=320)
     st.download_button(
         "📥 Download Lottery Preferences Data (CSV)",
         data=convert_df_to_csv(display_df),
@@ -1024,7 +1037,7 @@ def main() -> None:
                 table_df = page_df.copy()
                 rename_dict = {col: COLUMN_DEFINITIONS[col]["display_name"] for col in table_df.columns if col in COLUMN_DEFINITIONS}
                 table_df = table_df.rename(columns=rename_dict)
-                st.dataframe(table_df, width="stretch", height=420)
+                st.dataframe(table_df, use_container_width=True, height=420)
 
             st.caption(f"Showing {start_idx + 1}-{min(end_idx, len(sorted_df))} of {len(sorted_df)} lotteries")
 
@@ -1050,7 +1063,7 @@ def main() -> None:
         ref_df = pd.DataFrame(
             [{"Field Name": c, "Display Name": info["display_name"], "Description": info["description"]} for c, info in COLUMN_DEFINITIONS.items()]
         )
-        st.dataframe(ref_df, width="stretch", height=420)
+        st.dataframe(ref_df, use_container_width=True, height=420)
         st.caption("If a tab says fields are missing, compare these names against df.columns from the dataset response.")
 
     st.markdown("---")
@@ -1068,4 +1081,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-```
