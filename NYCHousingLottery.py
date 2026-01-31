@@ -546,7 +546,13 @@ def render_unit_distribution_tab(df: pd.DataFrame):
     unit_totals = {}
     for col in UNIT_DIST_COLS:
         if col in filtered.columns:
-            unit_totals[COLUMN_DEFINITIONS[col]['display_name']] = filtered[col].sum()
+            total = filtered[col].sum()
+            if pd.notna(total):
+                unit_totals[COLUMN_DEFINITIONS[col]['display_name']] = total
+    
+    if not unit_totals or sum(unit_totals.values()) == 0:
+        st.info("No unit distribution data available for the selected filters.")
+        return
     
     # Create charts
     chart_col1, chart_col2 = st.columns(2)
@@ -660,42 +666,49 @@ def render_ami_category_tab(df: pd.DataFrame):
     ami_totals = {}
     for col in AMI_COLS:
         if col in filtered.columns:
-            ami_totals[COLUMN_DEFINITIONS[col]['display_name']] = filtered[col].sum()
+            total = filtered[col].sum()
+            if pd.notna(total):
+                ami_totals[COLUMN_DEFINITIONS[col]['display_name']] = total
     
     # Summary metrics
-    st.markdown("#### Summary")
-    metric_cols = st.columns(len(ami_totals))
-    for i, (name, value) in enumerate(ami_totals.items()):
-        with metric_cols[i]:
-            st.metric(name, f"{int(value):,}")
+    if ami_totals:
+        st.markdown("#### Summary")
+        num_cols = min(len(ami_totals), 6)  # Max 6 columns
+        metric_cols = st.columns(num_cols)
+        for i, (name, value) in enumerate(ami_totals.items()):
+            with metric_cols[i % num_cols]:
+                st.metric(name, f"{int(value):,}")
     
     # Charts
-    chart_col1, chart_col2 = st.columns(2)
-    
-    with chart_col1:
-        # Donut chart
-        fig_donut = px.pie(
-            values=list(ami_totals.values()),
-            names=list(ami_totals.keys()),
-            title="Units by AMI Category",
-            hole=0.4,
-            color_discrete_sequence=px.colors.sequential.Viridis
-        )
-        st.plotly_chart(fig_donut, use_container_width=True)
-    
-    with chart_col2:
-        # Horizontal bar chart
-        fig_hbar = px.bar(
-            y=list(ami_totals.keys()),
-            x=list(ami_totals.values()),
-            title="Total Units by Income Category",
-            labels={'x': 'Number of Units', 'y': 'AMI Category'},
-            orientation='h',
-            color=list(ami_totals.values()),
-            color_continuous_scale='Viridis'
-        )
-        fig_hbar.update_layout(showlegend=False)
-        st.plotly_chart(fig_hbar, use_container_width=True)
+    if ami_totals and sum(ami_totals.values()) > 0:
+        chart_col1, chart_col2 = st.columns(2)
+        
+        with chart_col1:
+            # Donut chart
+            fig_donut = px.pie(
+                values=list(ami_totals.values()),
+                names=list(ami_totals.keys()),
+                title="Units by AMI Category",
+                hole=0.4,
+                color_discrete_sequence=px.colors.sequential.Viridis
+            )
+            st.plotly_chart(fig_donut, use_container_width=True)
+        
+        with chart_col2:
+            # Horizontal bar chart
+            fig_hbar = px.bar(
+                y=list(ami_totals.keys()),
+                x=list(ami_totals.values()),
+                title="Total Units by Income Category",
+                labels={'x': 'Number of Units', 'y': 'AMI Category'},
+                orientation='h',
+                color=list(ami_totals.values()),
+                color_continuous_scale='Viridis'
+            )
+            fig_hbar.update_layout(showlegend=False)
+            st.plotly_chart(fig_hbar, use_container_width=True)
+    else:
+        st.info("No AMI category data available for the selected filters.")
     
     # Trend over time
     st.markdown("#### AMI Distribution Over Time")
@@ -777,61 +790,70 @@ def render_lottery_percentage_tab(df: pd.DataFrame):
     pct_avgs = {}
     for col in LOTTERY_PCT_COLS:
         if col in filtered.columns:
-            pct_avgs[COLUMN_DEFINITIONS[col]['display_name']] = filtered[col].mean()
+            avg_val = filtered[col].mean()
+            if pd.notna(avg_val):
+                pct_avgs[COLUMN_DEFINITIONS[col]['display_name']] = avg_val
     
     # Summary metrics
-    st.markdown("#### Average Preference Percentages")
-    metric_cols = st.columns(3)
-    for i, (name, value) in enumerate(pct_avgs.items()):
-        with metric_cols[i % 3]:
-            st.metric(name, f"{value:.1f}%")
+    if pct_avgs:
+        st.markdown("#### Average Preference Percentages")
+        num_cols = min(len(pct_avgs), 3)  # Max 3 columns per row
+        metric_cols = st.columns(num_cols)
+        for i, (name, value) in enumerate(pct_avgs.items()):
+            with metric_cols[i % num_cols]:
+                st.metric(name, f"{value:.1f}%")
     
     # Charts
-    chart_col1, chart_col2 = st.columns(2)
-    
-    with chart_col1:
-        # Radar chart
-        categories = list(pct_avgs.keys())
-        values = list(pct_avgs.values())
+    if pct_avgs and len(pct_avgs) > 0:
+        chart_col1, chart_col2 = st.columns(2)
         
-        fig_radar = go.Figure()
-        fig_radar.add_trace(go.Scatterpolar(
-            r=values + [values[0]],
-            theta=categories + [categories[0]],
-            fill='toself',
-            name='Average %',
-            line_color='#667eea'
-        ))
-        fig_radar.update_layout(
-            polar=dict(radialaxis=dict(visible=True, range=[0, max(values) * 1.2 if values else 100])),
-            showlegend=False,
-            title="Average Preference Percentages"
-        )
-        st.plotly_chart(fig_radar, use_container_width=True)
-    
-    with chart_col2:
-        # Box plot for distribution
-        box_data = []
-        for col in LOTTERY_PCT_COLS:
-            if col in filtered.columns:
-                for val in filtered[col].dropna():
-                    box_data.append({
-                        'Preference': COLUMN_DEFINITIONS[col]['display_name'],
-                        'Percentage': val
-                    })
-        
-        if box_data:
-            box_df = pd.DataFrame(box_data)
-            fig_box = px.box(
-                box_df,
-                x='Preference',
-                y='Percentage',
-                title="Distribution of Preference Percentages",
-                color='Preference',
-                color_discrete_sequence=px.colors.qualitative.Set3
+        with chart_col1:
+            # Radar chart
+            categories = list(pct_avgs.keys())
+            values = list(pct_avgs.values())
+            
+            fig_radar = go.Figure()
+            fig_radar.add_trace(go.Scatterpolar(
+                r=values + [values[0]],
+                theta=categories + [categories[0]],
+                fill='toself',
+                name='Average %',
+                line_color='#667eea'
+            ))
+            fig_radar.update_layout(
+                polar=dict(radialaxis=dict(visible=True, range=[0, max(values) * 1.2 if values else 100])),
+                showlegend=False,
+                title="Average Preference Percentages"
             )
-            fig_box.update_layout(showlegend=False, xaxis_tickangle=-45)
-            st.plotly_chart(fig_box, use_container_width=True)
+            st.plotly_chart(fig_radar, use_container_width=True)
+        
+        with chart_col2:
+            # Box plot for distribution
+            box_data = []
+            for col in LOTTERY_PCT_COLS:
+                if col in filtered.columns:
+                    for val in filtered[col].dropna():
+                        box_data.append({
+                            'Preference': COLUMN_DEFINITIONS[col]['display_name'],
+                            'Percentage': val
+                        })
+            
+            if box_data:
+                box_df = pd.DataFrame(box_data)
+                fig_box = px.box(
+                    box_df,
+                    x='Preference',
+                    y='Percentage',
+                    title="Distribution of Preference Percentages",
+                    color='Preference',
+                    color_discrete_sequence=px.colors.qualitative.Set3
+                )
+                fig_box.update_layout(showlegend=False, xaxis_tickangle=-45)
+                st.plotly_chart(fig_box, use_container_width=True)
+            else:
+                st.info("No distribution data available.")
+    else:
+        st.info("No lottery preference data available for the selected filters.")
     
     # By Borough comparison
     st.markdown("#### Preference Percentages by Borough")
