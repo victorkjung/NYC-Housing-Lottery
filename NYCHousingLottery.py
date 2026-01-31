@@ -13,7 +13,7 @@ import folium
 from streamlit_folium import st_folium
 import plotly.express as px
 import plotly.graph_objects as go
-from typing import Optional, List
+from typing import Optional, List, Dict, Tuple
 
 
 # ---------------------------
@@ -27,7 +27,7 @@ st.set_page_config(
 )
 
 # ---------------------------
-# Column definitions
+# Column definitions (friendly labels + descriptions)
 # ---------------------------
 COLUMN_DEFINITIONS = {
     "lottery_id": {"display_name": "Lottery ID", "description": "Unique identifier for the housing lottery"},
@@ -43,37 +43,16 @@ COLUMN_DEFINITIONS = {
     "unit_distribution_2_bedrooms": {"display_name": "2-Bedroom Units", "description": "Number of 2-bedroom apartments available"},
     "unit_distribution_3_bedrooms": {"display_name": "3-Bedroom Units", "description": "Number of 3-bedroom apartments available"},
     "unit_distribution_4_bedroom": {"display_name": "4+ Bedroom Units", "description": "Number of 4 or more bedroom apartments available"},
-    "applied_income_ami_category_extremely_low_income": {
-        "display_name": "Extremely Low Income",
-        "description": "Units for households at 0-30% Area Median Income",
-    },
-    "applied_income_ami_category_very_low_income": {
-        "display_name": "Very Low Income",
-        "description": "Units for households at 31-50% Area Median Income",
-    },
-    "applied_income_ami_category_low_income": {
-        "display_name": "Low Income",
-        "description": "Units for households at 51-80% Area Median Income",
-    },
-    "applied_income_ami_category_moderate_income": {
-        "display_name": "Moderate Income",
-        "description": "Units for households at 81-120% Area Median Income",
-    },
-    "applied_income_ami_category_middle_income": {
-        "display_name": "Middle Income",
-        "description": "Units for households at 121-165% Area Median Income",
-    },
-    "applied_income_ami_category_above_middle_income": {
-        "display_name": "Above Middle Income",
-        "description": "Units for households above 165% Area Median Income",
-    },
+    "applied_income_ami_category_extremely_low_income": {"display_name": "Extremely Low Income", "description": "Units for households at 0-30% AMI"},
+    "applied_income_ami_category_very_low_income": {"display_name": "Very Low Income", "description": "Units for households at 31-50% AMI"},
+    "applied_income_ami_category_low_income": {"display_name": "Low Income", "description": "Units for households at 51-80% AMI"},
+    "applied_income_ami_category_moderate_income": {"display_name": "Moderate Income", "description": "Units for households at 81-120% AMI"},
+    "applied_income_ami_category_middle_income": {"display_name": "Middle Income", "description": "Units for households at 121-165% AMI"},
+    "applied_income_ami_category_above_middle_income": {"display_name": "Above Middle Income", "description": "Units for households above 165% AMI"},
     "lottery_mobility_percentage": {"display_name": "Mobility %", "description": "Percentage of units for applicants with mobility disabilities"},
     "lottery_vision_hearing_percentage": {"display_name": "Vision/Hearing %", "description": "Percentage of units for applicants with vision/hearing disabilities"},
     "lottery_community_board_percentage": {"display_name": "Community Board %", "description": "Percentage of units reserved for community board residents"},
-    "lottery_municipal_employee_military_veteran_percentage": {
-        "display_name": "Municipal/Veteran %",
-        "description": "Percentage for municipal employees and military veterans",
-    },
+    "lottery_municipal_employee_military_veteran_percentage": {"display_name": "Municipal/Veteran %", "description": "Percentage for municipal employees and military veterans"},
     "lottery_nycha_percentage": {"display_name": "NYCHA %", "description": "Percentage of units for NYCHA residents"},
     "lottery_senior_percentage": {"display_name": "Senior %", "description": "Percentage of units reserved for seniors"},
     "borough": {"display_name": "Borough", "description": "NYC borough where the development is located"},
@@ -83,6 +62,7 @@ COLUMN_DEFINITIONS = {
     "longitude": {"display_name": "Longitude", "description": "Geographic longitude coordinate"},
 }
 
+# “Canonical” lists (we will resolve aliases dynamically at runtime)
 UNIT_DIST_COLS = [
     "unit_distribution_studio",
     "unit_distribution_1_bedroom",
@@ -109,54 +89,55 @@ LOTTERY_PCT_COLS = [
     "lottery_senior_percentage",
 ]
 
+
 # ---------------------------
 # Custom CSS
 # ---------------------------
 st.markdown(
     """
 <style>
-    @media (max-width: 768px) {
-        .block-container { padding: 1rem 0.5rem; }
-        .stSelectbox, .stDateInput { min-width: 100%; }
-    }
+  @media (max-width: 768px) {
+    .block-container { padding: 1rem 0.5rem; }
+    .stSelectbox, .stDateInput { min-width: 100%; }
+  }
 
-    .lottery-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        border-radius: 12px;
-        padding: 1.2rem;
-        margin: 0.8rem 0;
-        color: white;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-    }
-    .lottery-card h3 { margin: 0 0 0.5rem 0; font-size: 1.1rem; color: white; }
-    .lottery-card p { margin: 0.3rem 0; font-size: 0.9rem; opacity: 0.95; }
+  .lottery-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 12px;
+    padding: 1.2rem;
+    margin: 0.8rem 0;
+    color: white;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+  }
+  .lottery-card h3 { margin: 0 0 0.5rem 0; font-size: 1.1rem; color: white; }
+  .lottery-card p { margin: 0.3rem 0; font-size: 0.9rem; opacity: 0.95; }
 
-    .status-open { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
-    .status-closed { background: linear-gradient(135deg, #636363 0%, #a2ab58 100%); }
-    .status-filled { background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%); }
+  .status-open  { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+  .status-closed{ background: linear-gradient(135deg, #636363 0%, #a2ab58 100%); }
+  .status-filled{ background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%); }
 
-    .main-header {
-        text-align: center;
-        padding: 1rem 0;
-        background: linear-gradient(90deg, #1a1a2e 0%, #16213e 100%);
-        border-radius: 10px;
-        margin-bottom: 1.5rem;
-    }
-    .main-header h1 { color: #e94560; font-size: 2rem; margin: 0; }
-    .main-header p { color: #eaeaea; margin: 0.5rem 0 0 0; }
+  .main-header {
+    text-align: center;
+    padding: 1rem 0;
+    background: linear-gradient(90deg, #1a1a2e 0%, #16213e 100%);
+    border-radius: 10px;
+    margin-bottom: 1.5rem;
+  }
+  .main-header h1 { color: #e94560; font-size: 2rem; margin: 0; }
+  .main-header p  { color: #eaeaea; margin: 0.5rem 0 0 0; }
 
-    .stat-card {
-        background: #f8f9fa;
-        border-radius: 10px;
-        padding: 1rem;
-        text-align: center;
-        border-left: 4px solid #667eea;
-    }
-    .stat-number { font-size: 1.8rem; font-weight: bold; color: #667eea; }
-    .stat-label { font-size: 0.85rem; color: #666; }
+  .stat-card {
+    background: #f8f9fa;
+    border-radius: 10px;
+    padding: 1rem;
+    text-align: center;
+    border-left: 4px solid #667eea;
+  }
+  .stat-number { font-size: 1.8rem; font-weight: bold; color: #667eea; }
+  .stat-label  { font-size: 0.85rem; color: #666; }
 
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
+  #MainMenu {visibility: hidden;}
+  footer {visibility: hidden;}
 </style>
 """,
     unsafe_allow_html=True,
@@ -164,16 +145,118 @@ st.markdown(
 
 
 # ---------------------------
-# Helpers
+# Schema resolution helpers (fix “only studios” + missing tab fields)
+# ---------------------------
+def resolve_first_existing(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+
+def safe_numeric_sum(series: pd.Series) -> float:
+    s = pd.to_numeric(series, errors="coerce")
+    return float(s.fillna(0).sum())
+
+
+def safe_numeric_mean(series: pd.Series) -> float:
+    s = pd.to_numeric(series, errors="coerce")
+    if s.dropna().empty:
+        return float("nan")
+    return float(s.mean())
+
+
+def detect_related_columns(df: pd.DataFrame, keywords: List[str]) -> List[str]:
+    kws = [k.lower() for k in keywords]
+    hits = []
+    for c in df.columns:
+        cl = c.lower()
+        if any(k in cl for k in kws):
+            hits.append(c)
+    return sorted(hits)
+
+
+def resolve_unit_distribution_columns(df: pd.DataFrame) -> Dict[str, Tuple[str, str]]:
+    """
+    logical_key -> (actual_column_name, label)
+    """
+    alias_map = {
+        "studio": (["unit_distribution_studio", "studio_units", "studios"], "Studio"),
+        "1br": (["unit_distribution_1_bedroom", "unit_distribution_1_bedrooms", "1_bedroom_units", "one_bedroom_units", "unit_1br"], "1BR"),
+        "2br": (["unit_distribution_2_bedrooms", "unit_distribution_2_bedroom", "2_bedroom_units", "two_bedroom_units", "unit_2br"], "2BR"),
+        "3br": (["unit_distribution_3_bedrooms", "unit_distribution_3_bedroom", "3_bedroom_units", "three_bedroom_units", "unit_3br"], "3BR"),
+        "4br": (["unit_distribution_4_bedroom", "unit_distribution_4_bedrooms", "4_bedroom_units", "four_bedroom_units", "unit_4br", "unit_distribution_4_plus"], "4+BR"),
+    }
+    resolved: Dict[str, Tuple[str, str]] = {}
+    for logical, (candidates, label) in alias_map.items():
+        actual = resolve_first_existing(df, candidates)
+        if actual:
+            resolved[logical] = (actual, label)
+    return resolved
+
+
+def resolve_ami_columns(df: pd.DataFrame) -> Dict[str, Tuple[str, str]]:
+    alias_map = {
+        "eli": (
+            ["applied_income_ami_category_extremely_low_income", "extremely_low_income", "ami_extremely_low", "ami_0_30"],
+            "Extremely Low (0–30% AMI)",
+        ),
+        "vli": (
+            ["applied_income_ami_category_very_low_income", "very_low_income", "ami_very_low", "ami_31_50"],
+            "Very Low (31–50% AMI)",
+        ),
+        "li": (
+            ["applied_income_ami_category_low_income", "low_income", "ami_low", "ami_51_80"],
+            "Low (51–80% AMI)",
+        ),
+        "mod": (
+            ["applied_income_ami_category_moderate_income", "moderate_income", "ami_moderate", "ami_81_120"],
+            "Moderate (81–120% AMI)",
+        ),
+        "mid": (
+            ["applied_income_ami_category_middle_income", "middle_income", "ami_middle", "ami_121_165"],
+            "Middle (121–165% AMI)",
+        ),
+        "above": (
+            ["applied_income_ami_category_above_middle_income", "above_middle_income", "ami_above_middle", "ami_165_plus"],
+            "Above Middle (165%+ AMI)",
+        ),
+    }
+    resolved: Dict[str, Tuple[str, str]] = {}
+    for logical, (candidates, label) in alias_map.items():
+        actual = resolve_first_existing(df, candidates)
+        if actual:
+            resolved[logical] = (actual, label)
+    return resolved
+
+
+def resolve_preference_pct_columns(df: pd.DataFrame) -> Dict[str, Tuple[str, str]]:
+    alias_map = {
+        "mobility": (["lottery_mobility_percentage", "mobility_percentage", "mobility_pct"], "Mobility"),
+        "vh": (["lottery_vision_hearing_percentage", "vision_hearing_percentage", "vision_hearing_pct"], "Vision/Hearing"),
+        "cb": (["lottery_community_board_percentage", "community_board_percentage", "community_board_pct"], "Community Board"),
+        "mv": (["lottery_municipal_employee_military_veteran_percentage", "municipal_employee_military_veteran_percentage", "municipal_veteran_pct"], "Municipal/Veteran"),
+        "nycha": (["lottery_nycha_percentage", "nycha_percentage", "nycha_pct"], "NYCHA"),
+        "senior": (["lottery_senior_percentage", "senior_percentage", "senior_pct"], "Senior"),
+    }
+    resolved: Dict[str, Tuple[str, str]] = {}
+    for logical, (candidates, label) in alias_map.items():
+        actual = resolve_first_existing(df, candidates)
+        if actual:
+            resolved[logical] = (actual, label)
+    return resolved
+
+
+# ---------------------------
+# General helpers
 # ---------------------------
 def _safe_str_series(df: pd.DataFrame, col: str) -> pd.Series:
-    """Return a string-cast series if col exists; otherwise an empty series."""
     if col not in df.columns:
         return pd.Series([], dtype="object")
     return df[col].astype(str)
 
 
-def _to_date(d: Optional[date | datetime]) -> Optional[pd.Timestamp]:
+def _to_timestamp(d: Optional[date | datetime]) -> Optional[pd.Timestamp]:
     if d is None:
         return None
     if isinstance(d, datetime):
@@ -181,10 +264,14 @@ def _to_date(d: Optional[date | datetime]) -> Optional[pd.Timestamp]:
     return pd.Timestamp(d)
 
 
+# ---------------------------
+# Data fetch
+# ---------------------------
 @st.cache_data(ttl=3600)
 def fetch_lottery_data() -> pd.DataFrame:
     """
-    Fetch housing lottery data from NYC Open Data Socrata API
+    Fetch housing lottery data from NYC Open Data Socrata API.
+    Note: Socrata fields can change; the UI resolves columns dynamically.
     """
     api_url = "https://data.cityofnewyork.us/resource/vy5i-a666.json"
     params = {"$limit": 5000, "$order": "lottery_end_date DESC"}
@@ -193,7 +280,6 @@ def fetch_lottery_data() -> pd.DataFrame:
         response = requests.get(api_url, params=params, timeout=30)
         response.raise_for_status()
         data = response.json()
-
         if not data:
             return pd.DataFrame()
 
@@ -204,8 +290,8 @@ def fetch_lottery_data() -> pd.DataFrame:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors="coerce")
 
-        # Convert numeric columns (only if present)
-        numeric_columns = [
+        # Convert numeric columns if present
+        numeric_candidates = [
             "latitude",
             "longitude",
             "unit_count",
@@ -214,7 +300,7 @@ def fetch_lottery_data() -> pd.DataFrame:
             *AMI_COLS,
             *LOTTERY_PCT_COLS,
         ]
-        for col in numeric_columns:
+        for col in numeric_candidates:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -225,6 +311,9 @@ def fetch_lottery_data() -> pd.DataFrame:
         return pd.DataFrame()
 
 
+# ---------------------------
+# Filtering
+# ---------------------------
 def filter_data(
     df: pd.DataFrame,
     borough: Optional[str] = None,
@@ -233,10 +322,6 @@ def filter_data(
     end_date: Optional[date | datetime] = None,
     development_type: Optional[str] = None,
 ) -> pd.DataFrame:
-    """
-    Filter lottery data based on user selections.
-    Robust to missing columns and non-string types.
-    """
     if df is None or df.empty:
         return pd.DataFrame()
 
@@ -254,8 +339,8 @@ def filter_data(
         d = filtered["development_type"].astype(str)
         filtered = filtered[d.str.contains(development_type, case=False, na=False)]
 
-    sd = _to_date(start_date)
-    ed = _to_date(end_date)
+    sd = _to_timestamp(start_date)
+    ed = _to_timestamp(end_date)
 
     if sd is not None and "lottery_end_date" in filtered.columns:
         filtered = filtered[filtered["lottery_end_date"] >= sd]
@@ -266,6 +351,9 @@ def filter_data(
     return filtered
 
 
+# ---------------------------
+# UI helpers
+# ---------------------------
 def get_status_class(status: str) -> str:
     status = (status or "").lower()
     if "open" in status:
@@ -276,9 +364,6 @@ def get_status_class(status: str) -> str:
 
 
 def create_map(df: pd.DataFrame) -> folium.Map:
-    """
-    Create a Folium map with lottery locations (robust to missing lat/long columns).
-    """
     center_lat, center_lon = 40.7128, -74.0060
 
     if df is None or df.empty or "latitude" not in df.columns or "longitude" not in df.columns:
@@ -286,8 +371,8 @@ def create_map(df: pd.DataFrame) -> folium.Map:
 
     map_df = df.dropna(subset=["latitude", "longitude"])
     if not map_df.empty:
-        center_lat = float(map_df["latitude"].mean())
-        center_lon = float(map_df["longitude"].mean())
+        center_lat = float(pd.to_numeric(map_df["latitude"], errors="coerce").dropna().mean())
+        center_lon = float(pd.to_numeric(map_df["longitude"], errors="coerce").dropna().mean())
 
     m = folium.Map(location=[center_lat, center_lon], zoom_start=11, tiles="cartodbpositron")
 
@@ -304,7 +389,7 @@ def create_map(df: pd.DataFrame) -> folium.Map:
         end_dt = row.get("lottery_end_date", pd.NaT)
 
         popup_html = f"""
-        <div style="width: 250px; font-family: Arial, sans-serif;">
+        <div style="width: 260px; font-family: Arial, sans-serif;">
             <h4 style="margin: 0 0 10px 0; color: #333;">{row.get('lottery_name', 'N/A')}</h4>
             <p style="margin: 5px 0;"><strong>Status:</strong> {row.get('lottery_status', 'N/A')}</p>
             <p style="margin: 5px 0;"><strong>Borough:</strong> {row.get('borough', 'N/A')}</p>
@@ -315,9 +400,14 @@ def create_map(df: pd.DataFrame) -> folium.Map:
         </div>
         """
 
+        lat = pd.to_numeric(row.get("latitude", None), errors="coerce")
+        lon = pd.to_numeric(row.get("longitude", None), errors="coerce")
+        if pd.isna(lat) or pd.isna(lon):
+            continue
+
         folium.Marker(
-            location=[row["latitude"], row["longitude"]],
-            popup=folium.Popup(popup_html, max_width=300),
+            location=[float(lat), float(lon)],
+            popup=folium.Popup(popup_html, max_width=320),
             icon=folium.Icon(color=color, icon="home", prefix="fa"),
             tooltip=row.get("lottery_name", "Housing Lottery"),
         ).add_to(m)
@@ -368,55 +458,61 @@ def display_detailed_lottery_info(row: pd.Series) -> None:
                 "building_count",
                 "unit_count",
             ]:
-                if key in COLUMN_DEFINITIONS and key in row.index:
+                if key in row.index:
                     value = row.get(key, "N/A")
                     if pd.isna(value):
                         value = "N/A"
                     elif "date" in key and pd.notna(value):
                         value = pd.to_datetime(value).strftime("%m/%d/%Y")
-                    st.markdown(f"**{COLUMN_DEFINITIONS[key]['display_name']}:** {value}")
-                    st.caption(COLUMN_DEFINITIONS[key]["description"])
+                    label = COLUMN_DEFINITIONS.get(key, {}).get("display_name", key)
+                    desc = COLUMN_DEFINITIONS.get(key, {}).get("description", "")
+                    st.markdown(f"**{label}:** {value}")
+                    if desc:
+                        st.caption(desc)
 
         with col2:
             st.markdown("#### Unit Distribution")
-            for key in UNIT_DIST_COLS:
-                if key in COLUMN_DEFINITIONS and key in row.index:
-                    value = row.get(key, 0)
-                    value = 0 if pd.isna(value) else value
-                    st.markdown(f"**{COLUMN_DEFINITIONS[key]['display_name']}:** {int(value)}")
-                    st.caption(COLUMN_DEFINITIONS[key]["description"])
+            resolved_units = resolve_unit_distribution_columns(pd.DataFrame([row]))
+            if not resolved_units:
+                st.info("No unit distribution fields are present for this record.")
+            else:
+                for _, (colname, label) in resolved_units.items():
+                    val = row.get(colname, 0)
+                    val = 0 if pd.isna(val) else val
+                    st.markdown(f"**{label}:** {int(float(val))}")
 
             st.markdown("#### Location")
             for key in ["borough", "postcode", "community_board"]:
-                if key in COLUMN_DEFINITIONS and key in row.index:
+                if key in row.index:
+                    label = COLUMN_DEFINITIONS.get(key, {}).get("display_name", key)
                     value = row.get(key, "N/A")
                     value = "N/A" if pd.isna(value) else value
-                    st.markdown(f"**{COLUMN_DEFINITIONS[key]['display_name']}:** {value}")
+                    st.markdown(f"**{label}:** {value}")
 
         with col3:
-            st.markdown("#### Income Categories (AMI)")
-            ami_present = [c for c in AMI_COLS if c in row.index]
-            if not ami_present:
+            st.markdown("#### AMI Categories")
+            resolved_ami = resolve_ami_columns(pd.DataFrame([row]))
+            if not resolved_ami:
                 st.info("AMI category fields are not present for this record.")
             else:
-                for key in ami_present:
-                    value = row.get(key, 0)
-                    value = 0 if pd.isna(value) else value
-                    st.markdown(f"**{COLUMN_DEFINITIONS[key]['display_name']}:** {int(value)}")
+                for _, (colname, label) in resolved_ami.items():
+                    val = row.get(colname, 0)
+                    val = 0 if pd.isna(val) else val
+                    st.markdown(f"**{label}:** {int(float(val))}")
 
             st.markdown("#### Lottery Preferences (%)")
-            pct_present = [c for c in LOTTERY_PCT_COLS if c in row.index]
-            if not pct_present:
+            resolved_pct = resolve_preference_pct_columns(pd.DataFrame([row]))
+            if not resolved_pct:
                 st.info("Preference % fields are not present for this record.")
             else:
-                for key in pct_present:
-                    value = row.get(key, 0)
-                    value = 0 if pd.isna(value) else value
-                    st.markdown(f"**{COLUMN_DEFINITIONS[key]['display_name']}:** {value}%")
+                for _, (colname, label) in resolved_pct.items():
+                    val = row.get(colname, 0)
+                    val = 0 if pd.isna(val) else val
+                    st.markdown(f"**{label}:** {float(val):.1f}%")
 
 
 # ---------------------------
-# Analysis Tabs
+# Tabs
 # ---------------------------
 def render_unit_distribution_tab(df: pd.DataFrame) -> None:
     st.markdown("### 🏢 Unit Distribution Analysis")
@@ -426,103 +522,123 @@ def render_unit_distribution_tab(df: pd.DataFrame) -> None:
     filter_col1, filter_col2, filter_col3 = st.columns(3)
 
     with filter_col1:
-        boroughs = ["All Boroughs"]
-        if "borough" in df.columns:
-            boroughs += sorted(df["borough"].dropna().unique().tolist())
+        boroughs = ["All Boroughs"] + (sorted(df["borough"].dropna().unique().tolist()) if "borough" in df.columns else [])
         ud_borough = st.selectbox("Borough", boroughs, key="ud_borough")
 
     with filter_col2:
         ud_status = st.selectbox("Status", ["All Statuses", "Open", "Closed", "Filled"], key="ud_status")
 
     with filter_col3:
-        types = ["All Types"]
-        if "development_type" in df.columns:
-            types += sorted(df["development_type"].dropna().unique().tolist())
+        types = ["All Types"] + (sorted(df["development_type"].dropna().unique().tolist()) if "development_type" in df.columns else [])
         ud_type = st.selectbox("Development Type", types, key="ud_type")
 
     filtered = filter_data(df, borough=ud_borough, status=ud_status, development_type=ud_type)
-
     if filtered.empty:
         st.warning("No data available for the selected filters.")
         return
 
-    unit_cols_present = [c for c in UNIT_DIST_COLS if c in filtered.columns]
-    if not unit_cols_present:
-        st.info("Unit distribution columns are not present in the dataset response.")
+    resolved = resolve_unit_distribution_columns(filtered)
+    if not resolved:
+        st.info(
+            "Unit distribution columns were not found in the dataset response. "
+            "This usually means the dataset schema changed. See detected unit-related columns below."
+        )
+        candidates = detect_related_columns(filtered, ["unit", "bed", "studio"])
+        if candidates:
+            st.caption("Possible unit-related columns detected:")
+            st.code(", ".join(candidates)[:2000])
         return
 
-    unit_totals = {}
-    for col in unit_cols_present:
-        total = filtered[col].sum()
-        if pd.notna(total):
-            unit_totals[COLUMN_DEFINITIONS[col]["display_name"]] = float(total)
+    # Unit size selector (fix: allow all unit distributions, not just studios)
+    unit_labels = [label for (_, label) in resolved.values()]
+    selected_labels = st.multiselect(
+        "Unit sizes to include",
+        options=unit_labels,
+        default=unit_labels,
+        help="Select which unit sizes to include in the analysis.",
+        key="ud_unit_sizes",
+    )
 
-    if not unit_totals or sum(unit_totals.values()) == 0:
-        st.info("No unit distribution data available for the selected filters.")
+    chart_mode = st.radio("Chart view", ["Both", "Pie", "Bar"], horizontal=True, key="ud_chart_mode")
+    include_zeros = st.checkbox("Include unit sizes with zero total", value=False, key="ud_include_zeros")
+
+    label_to_actual = {label: actual for (_, (actual, label)) in resolved.items()}
+
+    totals: Dict[str, float] = {}
+    for lbl in selected_labels:
+        col = label_to_actual.get(lbl)
+        if col and col in filtered.columns:
+            totals[lbl] = safe_numeric_sum(filtered[col])
+
+    if not totals:
+        st.info("No unit totals could be calculated for the selected unit sizes.")
         return
 
+    totals_for_chart = totals if include_zeros else {k: v for k, v in totals.items() if v > 0}
+    if not totals_for_chart:
+        st.info("All selected unit sizes have zero totals for these filters.")
+        return
+
+    summary_df = (
+        pd.DataFrame({"Unit Size": list(totals_for_chart.keys()), "Units": list(totals_for_chart.values())})
+        .sort_values("Units", ascending=False)
+        .reset_index(drop=True)
+    )
+    summary_df["Share"] = (summary_df["Units"] / summary_df["Units"].sum()).map(lambda x: f"{x:.1%}")
+
+    st.markdown("#### Summary")
+    st.dataframe(summary_df, width="stretch", height=230)
+
+    # Charts (Pie is often better; you can pick Both)
     chart_col1, chart_col2 = st.columns(2)
 
-    with chart_col1:
-        fig_pie = px.pie(
-            values=list(unit_totals.values()),
-            names=list(unit_totals.keys()),
-            title="Unit Distribution by Size",
-        )
-        fig_pie.update_traces(textposition="inside", textinfo="percent+label")
-        st.plotly_chart(fig_pie, width="stretch")
-
-    with chart_col2:
-        fig_bar = px.bar(
-            x=list(unit_totals.keys()),
-            y=list(unit_totals.values()),
-            title="Total Units by Size",
-            labels={"x": "Unit Size", "y": "Number of Units"},
-        )
-        fig_bar.update_layout(showlegend=False)
-        st.plotly_chart(fig_bar, width="stretch")
-
-    if "borough" in filtered.columns:
-        st.markdown("#### Unit Distribution by Borough")
-        borough_data = []
-        for b in filtered["borough"].dropna().unique():
-            bdf = filtered[filtered["borough"] == b]
-            row_data = {"Borough": b}
-            for col in unit_cols_present:
-                row_data[COLUMN_DEFINITIONS[col]["display_name"]] = bdf[col].sum()
-            borough_data.append(row_data)
-
-        borough_summary = pd.DataFrame(borough_data)
-        if not borough_summary.empty and len(borough_summary) > 0:
-            fig_stacked = px.bar(
-                borough_summary,
-                x="Borough",
-                y=[COLUMN_DEFINITIONS[c]["display_name"] for c in unit_cols_present],
-                title="Unit Distribution by Borough",
-                barmode="stack",
+    if chart_mode in ("Both", "Pie"):
+        with chart_col1:
+            fig_pie = px.pie(
+                summary_df,
+                values="Units",
+                names="Unit Size",
+                title="Unit Distribution by Size",
+                hole=0.35,
             )
-            st.plotly_chart(fig_stacked, width="stretch")
+            fig_pie.update_traces(textposition="inside", textinfo="percent+label")
+            st.plotly_chart(fig_pie, width="stretch")
 
+    if chart_mode in ("Both", "Bar"):
+        with (chart_col2 if chart_mode == "Both" else chart_col1):
+            fig_bar = px.bar(
+                summary_df,
+                x="Unit Size",
+                y="Units",
+                title="Total Units by Size",
+                labels={"Units": "Number of Units"},
+            )
+            fig_bar.update_layout(showlegend=False)
+            st.plotly_chart(fig_bar, width="stretch")
+
+    # Detailed table + download
     st.markdown("#### Detailed Data")
-    base_cols = [c for c in ["lottery_name", "borough", "lottery_status"] if c in filtered.columns]
-    display_cols = base_cols + unit_cols_present
+    base_cols = [c for c in ["lottery_name", "borough", "lottery_status", "development_type"] if c in filtered.columns]
+    selected_actual_cols = [label_to_actual[l] for l in selected_labels if l in label_to_actual and label_to_actual[l] in filtered.columns]
+    display_cols = base_cols + selected_actual_cols
 
     display_df = filtered[display_cols].copy()
-
     rename_map = {
         "lottery_name": "Lottery Name",
         "borough": "Borough",
         "lottery_status": "Status",
-        **{c: COLUMN_DEFINITIONS[c]["display_name"] for c in unit_cols_present},
+        "development_type": "Development Type",
     }
+    for lbl in selected_labels:
+        col = label_to_actual.get(lbl)
+        if col and col in display_df.columns:
+            rename_map[col] = f"{lbl} Units"
     display_df = display_df.rename(columns=rename_map)
 
-    st.dataframe(display_df, width="stretch", height=300)
-
-    csv_data = convert_df_to_csv(display_df)
+    st.dataframe(display_df, width="stretch", height=350)
     st.download_button(
-        label="📥 Download Unit Distribution Data (CSV)",
-        data=csv_data,
+        "📥 Download Unit Distribution Data (CSV)",
+        data=convert_df_to_csv(display_df),
         file_name=f"unit_distribution_{datetime.now().strftime('%Y%m%d')}.csv",
         mime="text/csv",
         key="download_unit_dist",
@@ -537,134 +653,128 @@ def render_ami_category_tab(df: pd.DataFrame) -> None:
         st.markdown(
             """
 **Area Median Income (AMI)** is used to determine eligibility for affordable housing:
-- **Extremely Low Income**: 0-30% of AMI
-- **Very Low Income**: 31-50% of AMI
-- **Low Income**: 51-80% of AMI
-- **Moderate Income**: 81-120% of AMI
-- **Middle Income**: 121-165% of AMI
-- **Above Middle Income**: Above 165% of AMI
+- **Extremely Low Income**: 0–30% of AMI
+- **Very Low Income**: 31–50% of AMI
+- **Low Income**: 51–80% of AMI
+- **Moderate Income**: 81–120% of AMI
+- **Middle Income**: 121–165% of AMI
+- **Above Middle Income**: 165%+ AMI
 """
         )
 
     st.markdown("#### Filters")
-    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    c1, c2, c3 = st.columns(3)
 
-    with filter_col1:
-        boroughs = ["All Boroughs"]
-        if "borough" in df.columns:
-            boroughs += sorted(df["borough"].dropna().unique().tolist())
-        ami_borough = st.selectbox("Borough", boroughs, key="ami_borough")
+    with c1:
+        boroughs = ["All Boroughs"] + (sorted(df["borough"].dropna().unique().tolist()) if "borough" in df.columns else [])
+        b = st.selectbox("Borough", boroughs, key="ami_borough")
 
-    with filter_col2:
-        ami_status = st.selectbox("Status", ["All Statuses", "Open", "Closed", "Filled"], key="ami_status")
+    with c2:
+        s = st.selectbox("Status", ["All Statuses", "Open", "Closed", "Filled"], key="ami_status")
 
-    with filter_col3:
-        types = ["All Types"]
-        if "development_type" in df.columns:
-            types += sorted(df["development_type"].dropna().unique().tolist())
-        ami_type = st.selectbox("Development Type", types, key="ami_type")
+    with c3:
+        types = ["All Types"] + (sorted(df["development_type"].dropna().unique().tolist()) if "development_type" in df.columns else [])
+        t = st.selectbox("Development Type", types, key="ami_type")
 
-    filtered = filter_data(df, borough=ami_borough, status=ami_status, development_type=ami_type)
+    filtered = filter_data(df, borough=b, status=s, development_type=t)
     if filtered.empty:
         st.warning("No data available for the selected filters.")
         return
 
-    ami_cols_present = [c for c in AMI_COLS if c in filtered.columns]
-    if not ami_cols_present:
+    resolved = resolve_ami_columns(filtered)
+    if not resolved:
         st.info("AMI category columns are not present in the dataset response.")
+        candidates = detect_related_columns(filtered, ["ami", "income"])
+        if candidates:
+            st.caption("Possible AMI/income columns detected:")
+            st.code(", ".join(candidates)[:2000])
         return
 
-    # Totals
-    ami_totals = {}
-    for col in ami_cols_present:
-        total = filtered[col].sum()
-        if pd.notna(total):
-            ami_totals[COLUMN_DEFINITIONS[col]["display_name"]] = float(total)
+    labels = [label for (_, label) in resolved.values()]
+    selected = st.multiselect("AMI categories to include", labels, default=labels, key="ami_select")
+    label_to_actual = {label: actual for (_, (actual, label)) in resolved.items()}
 
-    if ami_totals:
-        st.markdown("#### Summary")
-        metric_cols = st.columns(min(len(ami_totals), 6))
-        for i, (name, value) in enumerate(ami_totals.items()):
-            with metric_cols[i % len(metric_cols)]:
-                st.metric(name, f"{int(value):,}")
+    totals: Dict[str, float] = {}
+    for lbl in selected:
+        col = label_to_actual.get(lbl)
+        if col and col in filtered.columns:
+            totals[lbl] = safe_numeric_sum(filtered[col])
 
-    if ami_totals and sum(ami_totals.values()) > 0:
-        chart_col1, chart_col2 = st.columns(2)
-
-        with chart_col1:
-            fig_donut = px.pie(
-                values=list(ami_totals.values()),
-                names=list(ami_totals.keys()),
-                title="Units by AMI Category",
-                hole=0.4,
-            )
-            st.plotly_chart(fig_donut, width="stretch")
-
-        with chart_col2:
-            fig_hbar = px.bar(
-                y=list(ami_totals.keys()),
-                x=list(ami_totals.values()),
-                title="Total Units by Income Category",
-                labels={"x": "Number of Units", "y": "AMI Category"},
-                orientation="h",
-            )
-            fig_hbar.update_layout(showlegend=False)
-            st.plotly_chart(fig_hbar, width="stretch")
-    else:
-        st.info("No AMI category data available for the selected filters.")
-
-    # Trend over time (SAFE: only present cols)
-    st.markdown("#### AMI Distribution Over Time")
-
-    if "lottery_start_date" not in filtered.columns:
-        st.info("No start-date field available to plot AMI trends over time.")
+    totals = {k: v for k, v in totals.items() if v > 0}
+    if not totals:
+        st.info("No AMI category totals available (all zero/missing) for these filters.")
         return
 
-    time_data = filtered.copy().dropna(subset=["lottery_start_date"])
-    if time_data.empty:
-        st.info("No valid start dates available to plot AMI trends over time.")
-        return
-
-    time_data["year_month"] = time_data["lottery_start_date"].dt.to_period("M").astype(str)
-    time_grouped = (
-        time_data.groupby("year_month")[ami_cols_present]
-        .sum(numeric_only=True)
-        .reset_index()
+    summary_df = (
+        pd.DataFrame({"AMI Category": list(totals.keys()), "Units": list(totals.values())})
+        .sort_values("Units", ascending=False)
+        .reset_index(drop=True)
     )
-    time_grouped.columns = ["Period"] + [COLUMN_DEFINITIONS[c]["display_name"] for c in ami_cols_present]
+    st.markdown("#### Summary")
+    st.dataframe(summary_df, width="stretch", height=230)
 
-    if len(time_grouped) > 1:
-        fig_line = px.line(
-            time_grouped,
-            x="Period",
-            y=[COLUMN_DEFINITIONS[c]["display_name"] for c in ami_cols_present],
-            title="AMI Category Trends Over Time",
-            markers=True,
-        )
-        fig_line.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig_line, width="stretch")
+    chart_col1, chart_col2 = st.columns(2)
+
+    with chart_col1:
+        fig = px.pie(summary_df, values="Units", names="AMI Category", title="Units by AMI Category", hole=0.35)
+        fig.update_traces(textposition="inside", textinfo="percent+label")
+        st.plotly_chart(fig, width="stretch")
+
+    with chart_col2:
+        figb = px.bar(summary_df, x="AMI Category", y="Units", title="Total Units by AMI Category")
+        figb.update_layout(showlegend=False, xaxis_tickangle=-30)
+        st.plotly_chart(figb, width="stretch")
+
+    # Trend over time (only if start dates exist)
+    st.markdown("#### AMI Distribution Over Time")
+    if "lottery_start_date" in filtered.columns:
+        time_data = filtered.dropna(subset=["lottery_start_date"]).copy()
+        if not time_data.empty:
+            time_data["year_month"] = time_data["lottery_start_date"].dt.to_period("M").astype(str)
+            cols = [label_to_actual[lbl] for lbl in selected if lbl in label_to_actual and label_to_actual[lbl] in filtered.columns]
+            if cols:
+                tg = time_data.groupby("year_month")[cols].sum(numeric_only=True).reset_index()
+                # Rename to friendly
+                rename = {"year_month": "Period"}
+                for lbl in selected:
+                    col = label_to_actual.get(lbl)
+                    if col in tg.columns:
+                        rename[col] = lbl
+                tg = tg.rename(columns=rename)
+
+                if len(tg) > 1:
+                    figl = px.line(tg, x="Period", y=[c for c in tg.columns if c != "Period"], title="AMI Trends Over Time", markers=True)
+                    figl.update_layout(xaxis_tickangle=-45)
+                    st.plotly_chart(figl, width="stretch")
+                else:
+                    st.info("Not enough time periods to display a trend.")
+        else:
+            st.info("No valid start dates available to plot trends.")
     else:
-        st.info("Not enough time periods to display a trend.")
+        st.info("No start-date field available to plot trends.")
 
+    # Detailed + download
     st.markdown("#### Detailed Data")
-    base_cols = [c for c in ["lottery_name", "borough", "lottery_status"] if c in filtered.columns]
-    display_cols = base_cols + ami_cols_present
+    base_cols = [c for c in ["lottery_name", "borough", "lottery_status", "development_type"] if c in filtered.columns]
+    cols = [label_to_actual[lbl] for lbl in selected if lbl in label_to_actual and label_to_actual[lbl] in filtered.columns]
+    display_df = filtered[base_cols + cols].copy()
 
-    display_df = filtered[display_cols].copy()
     rename_map = {
         "lottery_name": "Lottery Name",
         "borough": "Borough",
         "lottery_status": "Status",
-        **{c: COLUMN_DEFINITIONS[c]["display_name"] for c in ami_cols_present},
+        "development_type": "Development Type",
     }
+    for lbl in selected:
+        col = label_to_actual.get(lbl)
+        if col in display_df.columns:
+            rename_map[col] = lbl
     display_df = display_df.rename(columns=rename_map)
 
-    st.dataframe(display_df, width="stretch", height=300)
-
-    csv_data = convert_df_to_csv(display_df)
+    st.dataframe(display_df, width="stretch", height=320)
     st.download_button(
-        label="📥 Download AMI Category Data (CSV)",
-        data=csv_data,
+        "📥 Download AMI Category Data (CSV)",
+        data=convert_df_to_csv(display_df),
         file_name=f"ami_categories_{datetime.now().strftime('%Y%m%d')}.csv",
         mime="text/csv",
         key="download_ami",
@@ -683,139 +793,99 @@ NYC Housing Lotteries may reserve percentages of units for:
 - **Vision/Hearing**: Applicants with vision or hearing disabilities
 - **Community Board**: Residents of the local community board district
 - **Municipal/Veteran**: NYC municipal employees and military veterans
-- **NYCHA**: Current NYCHA (public housing) residents
+- **NYCHA**: Current NYCHA residents
 - **Senior**: Seniors (typically 62+)
 """
         )
 
     st.markdown("#### Filters")
-    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    c1, c2, c3 = st.columns(3)
 
-    with filter_col1:
-        boroughs = ["All Boroughs"]
-        if "borough" in df.columns:
-            boroughs += sorted(df["borough"].dropna().unique().tolist())
-        lp_borough = st.selectbox("Borough", boroughs, key="lp_borough")
+    with c1:
+        boroughs = ["All Boroughs"] + (sorted(df["borough"].dropna().unique().tolist()) if "borough" in df.columns else [])
+        b = st.selectbox("Borough", boroughs, key="lp_borough")
 
-    with filter_col2:
-        lp_status = st.selectbox("Status", ["All Statuses", "Open", "Closed", "Filled"], key="lp_status")
+    with c2:
+        s = st.selectbox("Status", ["All Statuses", "Open", "Closed", "Filled"], key="lp_status")
 
-    with filter_col3:
-        types = ["All Types"]
-        if "development_type" in df.columns:
-            types += sorted(df["development_type"].dropna().unique().tolist())
-        lp_type = st.selectbox("Development Type", types, key="lp_type")
+    with c3:
+        types = ["All Types"] + (sorted(df["development_type"].dropna().unique().tolist()) if "development_type" in df.columns else [])
+        t = st.selectbox("Development Type", types, key="lp_type")
 
-    filtered = filter_data(df, borough=lp_borough, status=lp_status, development_type=lp_type)
+    filtered = filter_data(df, borough=b, status=s, development_type=t)
     if filtered.empty:
         st.warning("No data available for the selected filters.")
         return
 
-    pct_cols_present = [c for c in LOTTERY_PCT_COLS if c in filtered.columns]
-    if not pct_cols_present:
+    resolved = resolve_preference_pct_columns(filtered)
+    if not resolved:
         st.info("Preference percentage columns are not present in the dataset response.")
+        candidates = detect_related_columns(filtered, ["percent", "percentage", "pct", "preference", "senior", "nycha", "mobility"])
+        if candidates:
+            st.caption("Possible preference/percentage columns detected:")
+            st.code(", ".join(candidates)[:2000])
         return
 
-    pct_avgs = {}
-    for col in pct_cols_present:
-        avg_val = filtered[col].mean()
-        if pd.notna(avg_val):
-            pct_avgs[COLUMN_DEFINITIONS[col]["display_name"]] = float(avg_val)
+    labels = [label for (_, label) in resolved.values()]
+    selected = st.multiselect("Preferences to include", labels, default=labels, key="lp_select")
+    label_to_actual = {label: actual for (_, (actual, label)) in resolved.items()}
 
-    if pct_avgs:
-        st.markdown("#### Average Preference Percentages")
-        metric_cols = st.columns(min(len(pct_avgs), 3))
-        for i, (name, value) in enumerate(pct_avgs.items()):
-            with metric_cols[i % len(metric_cols)]:
-                st.metric(name, f"{value:.1f}%")
+    # Averages (percentages)
+    avgs: Dict[str, float] = {}
+    for lbl in selected:
+        col = label_to_actual.get(lbl)
+        if col and col in filtered.columns:
+            av = safe_numeric_mean(filtered[col])
+            if pd.notna(av):
+                avgs[lbl] = av
 
-    if pct_avgs:
-        chart_col1, chart_col2 = st.columns(2)
+    if not avgs:
+        st.info("No preference percentage values available for these filters.")
+        return
 
-        with chart_col1:
-            categories = list(pct_avgs.keys())
-            values = list(pct_avgs.values())
+    summary_df = (
+        pd.DataFrame({"Preference": list(avgs.keys()), "Avg %": list(avgs.values())})
+        .sort_values("Avg %", ascending=False)
+        .reset_index(drop=True)
+    )
 
-            fig_radar = go.Figure()
-            fig_radar.add_trace(
-                go.Scatterpolar(
-                    r=values + [values[0]] if values else [],
-                    theta=categories + [categories[0]] if categories else [],
-                    fill="toself",
-                    name="Average %",
-                )
-            )
-            fig_radar.update_layout(
-                polar=dict(
-                    radialaxis=dict(visible=True, range=[0, max(values) * 1.2 if values else 100])
-                ),
-                showlegend=False,
-                title="Average Preference Percentages",
-            )
-            st.plotly_chart(fig_radar, width="stretch")
+    st.markdown("#### Summary")
+    st.dataframe(summary_df, width="stretch", height=230)
 
-        with chart_col2:
-            box_data = []
-            for col in pct_cols_present:
-                col_name = COLUMN_DEFINITIONS[col]["display_name"]
-                for val in filtered[col].dropna():
-                    box_data.append({"Preference": col_name, "Percentage": val})
+    chart_col1, chart_col2 = st.columns(2)
 
-            if box_data:
-                box_df = pd.DataFrame(box_data)
-                fig_box = px.box(
-                    box_df,
-                    x="Preference",
-                    y="Percentage",
-                    title="Distribution of Preference Percentages",
-                )
-                fig_box.update_layout(showlegend=False, xaxis_tickangle=-45)
-                st.plotly_chart(fig_box, width="stretch")
-            else:
-                st.info("No distribution data available.")
-    else:
-        st.info("No lottery preference data available for the selected filters.")
+    with chart_col1:
+        fig = px.pie(summary_df, values="Avg %", names="Preference", title="Average Preference % (Share)", hole=0.35)
+        fig.update_traces(textposition="inside", textinfo="percent+label")
+        st.plotly_chart(fig, width="stretch")
 
-    if "borough" in filtered.columns:
-        st.markdown("#### Preference Percentages by Borough")
-        borough_pct_data = []
-        for b in filtered["borough"].dropna().unique():
-            bdf = filtered[filtered["borough"] == b]
-            row_data = {"Borough": b}
-            for col in pct_cols_present:
-                row_data[COLUMN_DEFINITIONS[col]["display_name"]] = bdf[col].mean()
-            borough_pct_data.append(row_data)
+    with chart_col2:
+        figb = px.bar(summary_df, x="Preference", y="Avg %", title="Average Preference %", labels={"Avg %": "Average %"})
+        figb.update_layout(showlegend=False, xaxis_tickangle=-30)
+        st.plotly_chart(figb, width="stretch")
 
-        borough_pct_summary = pd.DataFrame(borough_pct_data)
-        if not borough_pct_summary.empty and len(borough_pct_summary) > 1:
-            fig_grouped = px.bar(
-                borough_pct_summary,
-                x="Borough",
-                y=[COLUMN_DEFINITIONS[c]["display_name"] for c in pct_cols_present],
-                title="Average Preference % by Borough",
-                barmode="group",
-            )
-            st.plotly_chart(fig_grouped, width="stretch")
-
+    # Detailed + download
     st.markdown("#### Detailed Data")
-    base_cols = [c for c in ["lottery_name", "borough", "lottery_status"] if c in filtered.columns]
-    display_cols = base_cols + pct_cols_present
-    display_df = filtered[display_cols].copy()
+    base_cols = [c for c in ["lottery_name", "borough", "lottery_status", "development_type"] if c in filtered.columns]
+    cols = [label_to_actual[lbl] for lbl in selected if lbl in label_to_actual and label_to_actual[lbl] in filtered.columns]
+    display_df = filtered[base_cols + cols].copy()
 
     rename_map = {
         "lottery_name": "Lottery Name",
         "borough": "Borough",
         "lottery_status": "Status",
-        **{c: COLUMN_DEFINITIONS[c]["display_name"] for c in pct_cols_present},
+        "development_type": "Development Type",
     }
+    for lbl in selected:
+        col = label_to_actual.get(lbl)
+        if col in display_df.columns:
+            rename_map[col] = f"{lbl} %"
     display_df = display_df.rename(columns=rename_map)
 
-    st.dataframe(display_df, width="stretch", height=300)
-
-    csv_data = convert_df_to_csv(display_df)
+    st.dataframe(display_df, width="stretch", height=320)
     st.download_button(
-        label="📥 Download Lottery Preferences Data (CSV)",
-        data=csv_data,
+        "📥 Download Lottery Preferences Data (CSV)",
+        data=convert_df_to_csv(display_df),
         file_name=f"lottery_preferences_{datetime.now().strftime('%Y%m%d')}.csv",
         mime="text/csv",
         key="download_lottery_pct",
@@ -823,7 +893,7 @@ NYC Housing Lotteries may reserve percentages of units for:
 
 
 # ---------------------------
-# Main
+# Main app
 # ---------------------------
 def main() -> None:
     st.markdown(
@@ -843,29 +913,26 @@ def main() -> None:
         st.error("Unable to load lottery data. Please try again later.")
         return
 
+    # Global filters
     st.markdown("### 🔍 Filter Lotteries")
-
     col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
 
     with col1:
-        boroughs = ["All Boroughs"]
-        if "borough" in df.columns:
-            boroughs += sorted(df["borough"].dropna().unique().tolist())
+        boroughs = ["All Boroughs"] + (sorted(df["borough"].dropna().unique().tolist()) if "borough" in df.columns else [])
         selected_borough = st.selectbox("Borough", boroughs, key="main_borough_filter")
 
     with col2:
         selected_status = st.selectbox("Status", ["All Statuses", "Open", "Closed", "Filled"], key="main_status_filter")
 
     with col3:
-        default_start = (datetime.now() - timedelta(days=30)).date()
-        start_date = st.date_input("From Date", value=default_start, key="main_start_date")
+        start_date = st.date_input("From Date", value=(datetime.now() - timedelta(days=30)).date(), key="main_start_date")
 
     with col4:
-        default_end = (datetime.now() + timedelta(days=180)).date()
-        end_date = st.date_input("To Date", value=default_end, key="main_end_date")
+        end_date = st.date_input("To Date", value=(datetime.now() + timedelta(days=180)).date(), key="main_end_date")
 
     filtered_df = filter_data(df, borough=selected_borough, status=selected_status, start_date=start_date, end_date=end_date)
 
+    # Stats
     st.markdown("### 📊 Summary Statistics")
     stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
 
@@ -882,7 +949,7 @@ def main() -> None:
 
     with stat_col2:
         if "lottery_status" in filtered_df.columns:
-            open_count = len(filtered_df[_safe_str_series(filtered_df, "lottery_status").str.contains("Open", case=False, na=False)])
+            open_count = int(_safe_str_series(filtered_df, "lottery_status").str.contains("Open", case=False, na=False).sum())
         else:
             open_count = 0
         st.markdown(
@@ -896,11 +963,11 @@ def main() -> None:
         )
 
     with stat_col3:
-        total_units = float(filtered_df["unit_count"].sum()) if "unit_count" in filtered_df.columns else 0.0
+        total_units = int(pd.to_numeric(filtered_df["unit_count"], errors="coerce").fillna(0).sum()) if "unit_count" in filtered_df.columns else 0
         st.markdown(
             f"""
         <div class="stat-card">
-            <div class="stat-number">{int(total_units):,}</div>
+            <div class="stat-number">{total_units:,}</div>
             <div class="stat-label">Total Units</div>
         </div>
         """,
@@ -931,32 +998,29 @@ def main() -> None:
 
         if not filtered_df.empty:
             lottery_map = create_map(filtered_df)
-            # streamlit-folium compatibility: don't pass use_container_width or width=None
+            # streamlit-folium compatibility: avoid width=None and use_container_width
             st_folium(lottery_map, height=500)
         else:
             st.info("No lotteries found matching your criteria.")
 
     with tab2:
         st.markdown("### Housing Lottery Calendar")
-        st.markdown("Click on each lottery to view all details including unit distribution, AMI categories, and preferences.")
+        st.markdown("Click on each lottery to view details (units, AMI, preferences if available).")
 
-        if not filtered_df.empty:
+        if filtered_df.empty:
+            st.info("No lotteries found matching your criteria.")
+        else:
             sort_col1, sort_col2 = st.columns([2, 2])
             with sort_col1:
                 show_open_first = st.checkbox("Show open lotteries first", value=True)
             with sort_col2:
                 view_mode = st.radio("View Mode", ["Card View", "Detailed View", "Table View"], horizontal=True)
 
-            if "lottery_end_date" in filtered_df.columns:
-                sorted_df = filtered_df.sort_values("lottery_end_date", ascending=True)
-            else:
-                sorted_df = filtered_df.copy()
+            sorted_df = filtered_df.sort_values("lottery_end_date", ascending=True) if "lottery_end_date" in filtered_df.columns else filtered_df.copy()
 
             if show_open_first and "lottery_status" in sorted_df.columns:
                 is_open = _safe_str_series(sorted_df, "lottery_status").str.contains("Open", case=False, na=False)
-                open_lotteries = sorted_df[is_open]
-                other_lotteries = sorted_df[~is_open]
-                sorted_df = pd.concat([open_lotteries, other_lotteries])
+                sorted_df = pd.concat([sorted_df[is_open], sorted_df[~is_open]])
 
             items_per_page = 10
             total_pages = max(1, (len(sorted_df) - 1) // items_per_page + 1)
@@ -976,21 +1040,18 @@ def main() -> None:
                 table_df = page_df.copy()
                 rename_dict = {col: COLUMN_DEFINITIONS[col]["display_name"] for col in table_df.columns if col in COLUMN_DEFINITIONS}
                 table_df = table_df.rename(columns=rename_dict)
-                st.dataframe(table_df, width="stretch", height=400)
+                st.dataframe(table_df, width="stretch", height=420)
 
             st.caption(f"Showing {start_idx + 1}-{min(end_idx, len(sorted_df))} of {len(sorted_df)} lotteries")
 
             st.markdown("---")
-            full_csv = convert_df_to_csv(filtered_df)
             st.download_button(
-                label="📥 Download All Filtered Data (CSV)",
-                data=full_csv,
+                "📥 Download All Filtered Data (CSV)",
+                data=convert_df_to_csv(filtered_df),
                 file_name=f"nyc_housing_lotteries_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv",
                 key="download_all",
             )
-        else:
-            st.info("No lotteries found matching your criteria.")
 
     with tab3:
         render_unit_distribution_tab(df)
@@ -1001,20 +1062,24 @@ def main() -> None:
     with tab5:
         render_lottery_percentage_tab(df)
 
+    # Column reference
     with st.expander("📖 Column Reference Guide"):
-        st.markdown("### Data Field Descriptions")
-        ref_data = [{"Field Name": c, "Display Name": info["display_name"], "Description": info["description"]} for c, info in COLUMN_DEFINITIONS.items()]
-        ref_df = pd.DataFrame(ref_data)
-        st.dataframe(ref_df, width="stretch", height=400)
+        ref_df = pd.DataFrame(
+            [{"Field Name": c, "Display Name": info["display_name"], "Description": info["description"]} for c, info in COLUMN_DEFINITIONS.items()]
+        )
+        st.dataframe(ref_df, width="stretch", height=420)
+        st.caption("Tip: If a tab says fields are missing, compare these names against df.columns from the dataset response.")
 
+    # Footer
     st.markdown("---")
     st.markdown(
         """
     <div style="text-align: center; color: #666; font-size: 0.85rem;">
-        <p>Data source: <a href="https://data.cityofnewyork.us/Housing-Development/Advertised-Lotteries-on-Housing-Connect-By-Lottery/vy5i-a666" target="_blank">NYC Open Data - Housing Connect Lotteries</a></p>
-        <p>For official applications, visit <a href="https://housingconnect.nyc.gov" target="_blank">NYC Housing Connect</a></p>
+      <p>Data source: <a href="https://data.cityofnewyork.us/Housing-Development/Advertised-Lotteries-on-Housing-Connect-By-Lottery/vy5i-a666" target="_blank">
+      NYC Open Data - Housing Connect Lotteries</a></p>
+      <p>For official applications, visit <a href="https://housingconnect.nyc.gov" target="_blank">NYC Housing Connect</a></p>
     </div>
-    """,
+""",
         unsafe_allow_html=True,
     )
 
