@@ -1,6 +1,6 @@
 """
 NYC Housing Lottery Finder
-A Streamlit app to browse and map NYC affordable housing lotteries
+A Streamlit app to browse, map, and analyze NYC affordable housing lotteries
 """
 
 import streamlit as st
@@ -9,6 +9,8 @@ import requests
 from datetime import datetime, timedelta
 import folium
 from streamlit_folium import st_folium
+import plotly.express as px
+import plotly.graph_objects as go
 from typing import Optional
 
 # Page configuration
@@ -18,6 +20,159 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+
+# Column definitions with descriptions
+COLUMN_DEFINITIONS = {
+    "lottery_id": {
+        "display_name": "Lottery ID",
+        "description": "Unique identifier for the housing lottery"
+    },
+    "lottery_name": {
+        "display_name": "Lottery Name",
+        "description": "Name of the housing development/lottery"
+    },
+    "lottery_status": {
+        "display_name": "Lottery Status",
+        "description": "Current status: Open, Closed, or All Units Filled"
+    },
+    "development_type": {
+        "display_name": "Development Type",
+        "description": "Type of housing: Rental or Homeownership"
+    },
+    "lottery_start_date": {
+        "display_name": "Start Date",
+        "description": "Date when lottery applications open"
+    },
+    "lottery_end_date": {
+        "display_name": "End Date",
+        "description": "Application deadline for the lottery"
+    },
+    "building_count": {
+        "display_name": "Building Count",
+        "description": "Number of buildings in the development"
+    },
+    "unit_count": {
+        "display_name": "Total Units",
+        "description": "Total number of available housing units"
+    },
+    "unit_distribution_studio": {
+        "display_name": "Studio Units",
+        "description": "Number of studio apartments available"
+    },
+    "unit_distribution_1_bedroom": {
+        "display_name": "1-Bedroom Units",
+        "description": "Number of 1-bedroom apartments available"
+    },
+    "unit_distribution_2_bedrooms": {
+        "display_name": "2-Bedroom Units",
+        "description": "Number of 2-bedroom apartments available"
+    },
+    "unit_distribution_3_bedrooms": {
+        "display_name": "3-Bedroom Units",
+        "description": "Number of 3-bedroom apartments available"
+    },
+    "unit_distribution_4_bedroom": {
+        "display_name": "4+ Bedroom Units",
+        "description": "Number of 4 or more bedroom apartments available"
+    },
+    "applied_income_ami_category_extremely_low_income": {
+        "display_name": "Extremely Low Income",
+        "description": "Units for households at 0-30% Area Median Income"
+    },
+    "applied_income_ami_category_very_low_income": {
+        "display_name": "Very Low Income",
+        "description": "Units for households at 31-50% Area Median Income"
+    },
+    "applied_income_ami_category_low_income": {
+        "display_name": "Low Income",
+        "description": "Units for households at 51-80% Area Median Income"
+    },
+    "applied_income_ami_category_moderate_income": {
+        "display_name": "Moderate Income",
+        "description": "Units for households at 81-120% Area Median Income"
+    },
+    "applied_income_ami_category_middle_income": {
+        "display_name": "Middle Income",
+        "description": "Units for households at 121-165% Area Median Income"
+    },
+    "applied_income_ami_category_above_middle_income": {
+        "display_name": "Above Middle Income",
+        "description": "Units for households above 165% Area Median Income"
+    },
+    "lottery_mobility_percentage": {
+        "display_name": "Mobility %",
+        "description": "Percentage of units for applicants with mobility disabilities"
+    },
+    "lottery_vision_hearing_percentage": {
+        "display_name": "Vision/Hearing %",
+        "description": "Percentage of units for applicants with vision/hearing disabilities"
+    },
+    "lottery_community_board_percentage": {
+        "display_name": "Community Board %",
+        "description": "Percentage of units reserved for community board residents"
+    },
+    "lottery_municipal_employee_military_veteran_percentage": {
+        "display_name": "Municipal/Veteran %",
+        "description": "Percentage for municipal employees and military veterans"
+    },
+    "lottery_nycha_percentage": {
+        "display_name": "NYCHA %",
+        "description": "Percentage of units for NYCHA residents"
+    },
+    "lottery_senior_percentage": {
+        "display_name": "Senior %",
+        "description": "Percentage of units reserved for seniors"
+    },
+    "borough": {
+        "display_name": "Borough",
+        "description": "NYC borough where the development is located"
+    },
+    "postcode": {
+        "display_name": "Zip Code",
+        "description": "Postal code of the development"
+    },
+    "community_board": {
+        "display_name": "Community Board",
+        "description": "NYC Community Board district number"
+    },
+    "latitude": {
+        "display_name": "Latitude",
+        "description": "Geographic latitude coordinate"
+    },
+    "longitude": {
+        "display_name": "Longitude",
+        "description": "Geographic longitude coordinate"
+    }
+}
+
+# Unit distribution columns
+UNIT_DIST_COLS = [
+    "unit_distribution_studio",
+    "unit_distribution_1_bedroom",
+    "unit_distribution_2_bedrooms",
+    "unit_distribution_3_bedrooms",
+    "unit_distribution_4_bedroom"
+]
+
+# AMI category columns
+AMI_COLS = [
+    "applied_income_ami_category_extremely_low_income",
+    "applied_income_ami_category_very_low_income",
+    "applied_income_ami_category_low_income",
+    "applied_income_ami_category_moderate_income",
+    "applied_income_ami_category_middle_income",
+    "applied_income_ami_category_above_middle_income"
+]
+
+# Lottery preference percentage columns
+LOTTERY_PCT_COLS = [
+    "lottery_mobility_percentage",
+    "lottery_vision_hearing_percentage",
+    "lottery_community_board_percentage",
+    "lottery_municipal_employee_military_veteran_percentage",
+    "lottery_nycha_percentage",
+    "lottery_senior_percentage"
+]
 
 # Custom CSS for mobile-friendly design
 st.markdown("""
@@ -106,12 +261,11 @@ st.markdown("""
         color: #666;
     }
     
-    /* Filter section */
-    .filter-section {
-        background: #f1f3f4;
-        padding: 1rem;
-        border-radius: 10px;
-        margin-bottom: 1rem;
+    /* Column description tooltip */
+    .col-desc {
+        font-size: 0.75rem;
+        color: #666;
+        font-style: italic;
     }
     
     /* Map container */
@@ -124,6 +278,11 @@ st.markdown("""
     /* Hide Streamlit branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
+    
+    /* Download button styling */
+    .download-btn {
+        margin-top: 1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -133,10 +292,8 @@ def fetch_lottery_data() -> pd.DataFrame:
     """
     Fetch housing lottery data from NYC Open Data Socrata API
     """
-    # Socrata API endpoint for NYC Housing Lottery data
     api_url = "https://data.cityofnewyork.us/resource/vy5i-a666.json"
     
-    # Request parameters - get all records with $limit
     params = {
         "$limit": 5000,
         "$order": "lottery_end_date DESC"
@@ -158,8 +315,23 @@ def fetch_lottery_data() -> pd.DataFrame:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors='coerce')
         
-        # Convert numeric columns
-        numeric_columns = ['latitude', 'longitude', 'unit_count', 'building_count']
+        # Convert all numeric columns
+        numeric_columns = [
+            'latitude', 'longitude', 'unit_count', 'building_count',
+            'unit_distribution_studio', 'unit_distribution_1_bedroom',
+            'unit_distribution_2_bedrooms', 'unit_distribution_3_bedrooms',
+            'unit_distribution_4_bedroom',
+            'applied_income_ami_category_extremely_low_income',
+            'applied_income_ami_category_very_low_income',
+            'applied_income_ami_category_low_income',
+            'applied_income_ami_category_moderate_income',
+            'applied_income_ami_category_middle_income',
+            'applied_income_ami_category_above_middle_income',
+            'lottery_mobility_percentage', 'lottery_vision_hearing_percentage',
+            'lottery_community_board_percentage',
+            'lottery_municipal_employee_military_veteran_percentage',
+            'lottery_nycha_percentage', 'lottery_senior_percentage'
+        ]
         for col in numeric_columns:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -176,7 +348,8 @@ def filter_data(
     borough: Optional[str] = None,
     status: Optional[str] = None,
     start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None,
+    development_type: Optional[str] = None
 ) -> pd.DataFrame:
     """
     Filter lottery data based on user selections
@@ -188,6 +361,9 @@ def filter_data(
     
     if status and status != "All Statuses":
         filtered = filtered[filtered['lottery_status'].str.contains(status, case=False, na=False)]
+    
+    if development_type and development_type != "All Types":
+        filtered = filtered[filtered['development_type'].str.contains(development_type, case=False, na=False)]
     
     if start_date:
         filtered = filtered[filtered['lottery_end_date'] >= pd.Timestamp(start_date)]
@@ -211,39 +387,30 @@ def create_map(df: pd.DataFrame) -> folium.Map:
     """
     Create a Folium map with lottery locations
     """
-    # Default to NYC center
     center_lat = 40.7128
     center_lon = -74.0060
     
-    # Filter rows with valid coordinates
     map_df = df.dropna(subset=['latitude', 'longitude'])
     
     if not map_df.empty:
         center_lat = map_df['latitude'].mean()
         center_lon = map_df['longitude'].mean()
     
-    # Create map
     m = folium.Map(
         location=[center_lat, center_lon],
         zoom_start=11,
         tiles='cartodbpositron'
     )
     
-    # Add markers for each lottery
     for _, row in map_df.iterrows():
-        # Determine marker color based on status
         status = str(row.get('lottery_status', '')).lower()
         if 'open' in status:
             color = 'green'
-            icon = 'home'
         elif 'filled' in status:
             color = 'red'
-            icon = 'home'
         else:
             color = 'blue'
-            icon = 'home'
         
-        # Create popup content
         popup_html = f"""
         <div style="width: 250px; font-family: Arial, sans-serif;">
             <h4 style="margin: 0 0 10px 0; color: #333;">{row.get('lottery_name', 'N/A')}</h4>
@@ -259,11 +426,16 @@ def create_map(df: pd.DataFrame) -> folium.Map:
         folium.Marker(
             location=[row['latitude'], row['longitude']],
             popup=folium.Popup(popup_html, max_width=300),
-            icon=folium.Icon(color=color, icon=icon, prefix='fa'),
+            icon=folium.Icon(color=color, icon='home', prefix='fa'),
             tooltip=row.get('lottery_name', 'Housing Lottery')
         ).add_to(m)
     
     return m
+
+
+def convert_df_to_csv(df: pd.DataFrame) -> bytes:
+    """Convert dataframe to CSV bytes for download"""
+    return df.to_csv(index=False).encode('utf-8')
 
 
 def display_lottery_card(row: pd.Series):
@@ -288,6 +460,420 @@ def display_lottery_card(row: pd.Series):
     """, unsafe_allow_html=True)
 
 
+def display_detailed_lottery_info(row: pd.Series):
+    """Display detailed lottery information with all columns"""
+    with st.expander(f"🏠 {row.get('lottery_name', 'N/A')} - {row.get('lottery_status', 'N/A')}", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("#### Basic Information")
+            for key in ['lottery_id', 'lottery_name', 'lottery_status', 'development_type', 
+                       'lottery_start_date', 'lottery_end_date', 'building_count', 'unit_count']:
+                if key in COLUMN_DEFINITIONS and key in row.index:
+                    value = row.get(key, 'N/A')
+                    if pd.isna(value):
+                        value = 'N/A'
+                    elif 'date' in key and pd.notna(value):
+                        value = pd.to_datetime(value).strftime('%m/%d/%Y')
+                    st.markdown(f"**{COLUMN_DEFINITIONS[key]['display_name']}:** {value}")
+                    st.caption(COLUMN_DEFINITIONS[key]['description'])
+        
+        with col2:
+            st.markdown("#### Unit Distribution")
+            for key in UNIT_DIST_COLS:
+                if key in COLUMN_DEFINITIONS and key in row.index:
+                    value = row.get(key, 0)
+                    if pd.isna(value):
+                        value = 0
+                    st.markdown(f"**{COLUMN_DEFINITIONS[key]['display_name']}:** {int(value)}")
+                    st.caption(COLUMN_DEFINITIONS[key]['description'])
+            
+            st.markdown("#### Location")
+            for key in ['borough', 'postcode', 'community_board']:
+                if key in COLUMN_DEFINITIONS and key in row.index:
+                    value = row.get(key, 'N/A')
+                    if pd.isna(value):
+                        value = 'N/A'
+                    st.markdown(f"**{COLUMN_DEFINITIONS[key]['display_name']}:** {value}")
+        
+        with col3:
+            st.markdown("#### Income Categories (AMI)")
+            for key in AMI_COLS:
+                if key in COLUMN_DEFINITIONS and key in row.index:
+                    value = row.get(key, 0)
+                    if pd.isna(value):
+                        value = 0
+                    st.markdown(f"**{COLUMN_DEFINITIONS[key]['display_name']}:** {int(value)}")
+            
+            st.markdown("#### Lottery Preferences (%)")
+            for key in LOTTERY_PCT_COLS:
+                if key in COLUMN_DEFINITIONS and key in row.index:
+                    value = row.get(key, 0)
+                    if pd.isna(value):
+                        value = 0
+                    st.markdown(f"**{COLUMN_DEFINITIONS[key]['display_name']}:** {value}%")
+
+
+def render_unit_distribution_tab(df: pd.DataFrame):
+    """Render the Unit Distribution analysis tab"""
+    st.markdown("### 🏢 Unit Distribution Analysis")
+    st.markdown("Analyze the distribution of unit sizes across housing lotteries.")
+    
+    # Filters specific to this tab
+    st.markdown("#### Filters")
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    
+    with filter_col1:
+        ud_boroughs = ["All Boroughs"] + sorted(df['borough'].dropna().unique().tolist())
+        ud_borough = st.selectbox("Borough", ud_boroughs, key="ud_borough")
+    
+    with filter_col2:
+        ud_statuses = ["All Statuses", "Open", "Closed", "Filled"]
+        ud_status = st.selectbox("Status", ud_statuses, key="ud_status")
+    
+    with filter_col3:
+        ud_types = ["All Types"] + sorted(df['development_type'].dropna().unique().tolist())
+        ud_type = st.selectbox("Development Type", ud_types, key="ud_type")
+    
+    # Apply filters
+    filtered = filter_data(df, borough=ud_borough, status=ud_status, development_type=ud_type)
+    
+    if filtered.empty:
+        st.warning("No data available for the selected filters.")
+        return
+    
+    # Calculate totals
+    unit_totals = {}
+    for col in UNIT_DIST_COLS:
+        if col in filtered.columns:
+            unit_totals[COLUMN_DEFINITIONS[col]['display_name']] = filtered[col].sum()
+    
+    # Create charts
+    chart_col1, chart_col2 = st.columns(2)
+    
+    with chart_col1:
+        # Pie chart
+        fig_pie = px.pie(
+            values=list(unit_totals.values()),
+            names=list(unit_totals.keys()),
+            title="Unit Distribution by Size",
+            color_discrete_sequence=px.colors.qualitative.Set2
+        )
+        fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+        st.plotly_chart(fig_pie, use_container_width=True)
+    
+    with chart_col2:
+        # Bar chart
+        fig_bar = px.bar(
+            x=list(unit_totals.keys()),
+            y=list(unit_totals.values()),
+            title="Total Units by Size",
+            labels={'x': 'Unit Size', 'y': 'Number of Units'},
+            color=list(unit_totals.keys()),
+            color_discrete_sequence=px.colors.qualitative.Set2
+        )
+        fig_bar.update_layout(showlegend=False)
+        st.plotly_chart(fig_bar, use_container_width=True)
+    
+    # By Borough breakdown
+    st.markdown("#### Unit Distribution by Borough")
+    borough_data = []
+    for borough in filtered['borough'].dropna().unique():
+        borough_df = filtered[filtered['borough'] == borough]
+        row_data = {'Borough': borough}
+        for col in UNIT_DIST_COLS:
+            if col in borough_df.columns:
+                row_data[COLUMN_DEFINITIONS[col]['display_name']] = borough_df[col].sum()
+        borough_data.append(row_data)
+    
+    borough_summary = pd.DataFrame(borough_data)
+    if not borough_summary.empty:
+        fig_stacked = px.bar(
+            borough_summary,
+            x='Borough',
+            y=[COLUMN_DEFINITIONS[col]['display_name'] for col in UNIT_DIST_COLS if col in filtered.columns],
+            title="Unit Distribution by Borough",
+            barmode='stack',
+            color_discrete_sequence=px.colors.qualitative.Set2
+        )
+        st.plotly_chart(fig_stacked, use_container_width=True)
+    
+    # Data table and download
+    st.markdown("#### Detailed Data")
+    display_cols = ['lottery_name', 'borough', 'lottery_status'] + [col for col in UNIT_DIST_COLS if col in filtered.columns]
+    display_df = filtered[display_cols].copy()
+    display_df.columns = ['Lottery Name', 'Borough', 'Status'] + [COLUMN_DEFINITIONS[col]['display_name'] for col in UNIT_DIST_COLS if col in filtered.columns]
+    
+    st.dataframe(display_df, use_container_width=True, height=300)
+    
+    csv_data = convert_df_to_csv(display_df)
+    st.download_button(
+        label="📥 Download Unit Distribution Data (CSV)",
+        data=csv_data,
+        file_name=f"unit_distribution_{datetime.now().strftime('%Y%m%d')}.csv",
+        mime="text/csv",
+        key="download_unit_dist"
+    )
+
+
+def render_ami_category_tab(df: pd.DataFrame):
+    """Render the AMI Category analysis tab"""
+    st.markdown("### 💰 Applied Income AMI Category Analysis")
+    st.markdown("Analyze units by Area Median Income (AMI) eligibility categories.")
+    
+    # AMI Category descriptions
+    with st.expander("ℹ️ What are AMI Categories?"):
+        st.markdown("""
+        **Area Median Income (AMI)** is used to determine eligibility for affordable housing:
+        - **Extremely Low Income**: 0-30% of AMI
+        - **Very Low Income**: 31-50% of AMI
+        - **Low Income**: 51-80% of AMI
+        - **Moderate Income**: 81-120% of AMI
+        - **Middle Income**: 121-165% of AMI
+        - **Above Middle Income**: Above 165% of AMI
+        """)
+    
+    # Filters
+    st.markdown("#### Filters")
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    
+    with filter_col1:
+        ami_boroughs = ["All Boroughs"] + sorted(df['borough'].dropna().unique().tolist())
+        ami_borough = st.selectbox("Borough", ami_boroughs, key="ami_borough")
+    
+    with filter_col2:
+        ami_statuses = ["All Statuses", "Open", "Closed", "Filled"]
+        ami_status = st.selectbox("Status", ami_statuses, key="ami_status")
+    
+    with filter_col3:
+        ami_types = ["All Types"] + sorted(df['development_type'].dropna().unique().tolist())
+        ami_type = st.selectbox("Development Type", ami_types, key="ami_type")
+    
+    # Apply filters
+    filtered = filter_data(df, borough=ami_borough, status=ami_status, development_type=ami_type)
+    
+    if filtered.empty:
+        st.warning("No data available for the selected filters.")
+        return
+    
+    # Calculate totals
+    ami_totals = {}
+    for col in AMI_COLS:
+        if col in filtered.columns:
+            ami_totals[COLUMN_DEFINITIONS[col]['display_name']] = filtered[col].sum()
+    
+    # Summary metrics
+    st.markdown("#### Summary")
+    metric_cols = st.columns(len(ami_totals))
+    for i, (name, value) in enumerate(ami_totals.items()):
+        with metric_cols[i]:
+            st.metric(name, f"{int(value):,}")
+    
+    # Charts
+    chart_col1, chart_col2 = st.columns(2)
+    
+    with chart_col1:
+        # Donut chart
+        fig_donut = px.pie(
+            values=list(ami_totals.values()),
+            names=list(ami_totals.keys()),
+            title="Units by AMI Category",
+            hole=0.4,
+            color_discrete_sequence=px.colors.sequential.Viridis
+        )
+        st.plotly_chart(fig_donut, use_container_width=True)
+    
+    with chart_col2:
+        # Horizontal bar chart
+        fig_hbar = px.bar(
+            y=list(ami_totals.keys()),
+            x=list(ami_totals.values()),
+            title="Total Units by Income Category",
+            labels={'x': 'Number of Units', 'y': 'AMI Category'},
+            orientation='h',
+            color=list(ami_totals.values()),
+            color_continuous_scale='Viridis'
+        )
+        fig_hbar.update_layout(showlegend=False)
+        st.plotly_chart(fig_hbar, use_container_width=True)
+    
+    # Trend over time
+    st.markdown("#### AMI Distribution Over Time")
+    time_data = filtered.copy()
+    time_data['year_month'] = time_data['lottery_start_date'].dt.to_period('M').astype(str)
+    time_grouped = time_data.groupby('year_month')[AMI_COLS].sum().reset_index()
+    time_grouped.columns = ['Period'] + [COLUMN_DEFINITIONS[col]['display_name'] for col in AMI_COLS]
+    
+    if len(time_grouped) > 1:
+        fig_line = px.line(
+            time_grouped,
+            x='Period',
+            y=[COLUMN_DEFINITIONS[col]['display_name'] for col in AMI_COLS],
+            title="AMI Category Trends Over Time",
+            markers=True
+        )
+        fig_line.update_layout(xaxis_tickangle=-45)
+        st.plotly_chart(fig_line, use_container_width=True)
+    
+    # Data table and download
+    st.markdown("#### Detailed Data")
+    display_cols = ['lottery_name', 'borough', 'lottery_status'] + [col for col in AMI_COLS if col in filtered.columns]
+    display_df = filtered[display_cols].copy()
+    display_df.columns = ['Lottery Name', 'Borough', 'Status'] + [COLUMN_DEFINITIONS[col]['display_name'] for col in AMI_COLS if col in filtered.columns]
+    
+    st.dataframe(display_df, use_container_width=True, height=300)
+    
+    csv_data = convert_df_to_csv(display_df)
+    st.download_button(
+        label="📥 Download AMI Category Data (CSV)",
+        data=csv_data,
+        file_name=f"ami_categories_{datetime.now().strftime('%Y%m%d')}.csv",
+        mime="text/csv",
+        key="download_ami"
+    )
+
+
+def render_lottery_percentage_tab(df: pd.DataFrame):
+    """Render the Lottery Preference Percentage analysis tab"""
+    st.markdown("### 📊 Lottery Preference Percentage Analysis")
+    st.markdown("Analyze lottery preference allocations for special populations.")
+    
+    # Preference descriptions
+    with st.expander("ℹ️ What are Lottery Preferences?"):
+        st.markdown("""
+        NYC Housing Lotteries may reserve percentages of units for:
+        - **Mobility**: Applicants with mobility disabilities
+        - **Vision/Hearing**: Applicants with vision or hearing disabilities
+        - **Community Board**: Residents of the local community board district
+        - **Municipal/Veteran**: NYC municipal employees and military veterans
+        - **NYCHA**: Current NYCHA (public housing) residents
+        - **Senior**: Seniors (typically 62+)
+        """)
+    
+    # Filters
+    st.markdown("#### Filters")
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    
+    with filter_col1:
+        lp_boroughs = ["All Boroughs"] + sorted(df['borough'].dropna().unique().tolist())
+        lp_borough = st.selectbox("Borough", lp_boroughs, key="lp_borough")
+    
+    with filter_col2:
+        lp_statuses = ["All Statuses", "Open", "Closed", "Filled"]
+        lp_status = st.selectbox("Status", lp_statuses, key="lp_status")
+    
+    with filter_col3:
+        lp_types = ["All Types"] + sorted(df['development_type'].dropna().unique().tolist())
+        lp_type = st.selectbox("Development Type", lp_types, key="lp_type")
+    
+    # Apply filters
+    filtered = filter_data(df, borough=lp_borough, status=lp_status, development_type=lp_type)
+    
+    if filtered.empty:
+        st.warning("No data available for the selected filters.")
+        return
+    
+    # Calculate averages
+    pct_avgs = {}
+    for col in LOTTERY_PCT_COLS:
+        if col in filtered.columns:
+            pct_avgs[COLUMN_DEFINITIONS[col]['display_name']] = filtered[col].mean()
+    
+    # Summary metrics
+    st.markdown("#### Average Preference Percentages")
+    metric_cols = st.columns(3)
+    for i, (name, value) in enumerate(pct_avgs.items()):
+        with metric_cols[i % 3]:
+            st.metric(name, f"{value:.1f}%")
+    
+    # Charts
+    chart_col1, chart_col2 = st.columns(2)
+    
+    with chart_col1:
+        # Radar chart
+        categories = list(pct_avgs.keys())
+        values = list(pct_avgs.values())
+        
+        fig_radar = go.Figure()
+        fig_radar.add_trace(go.Scatterpolar(
+            r=values + [values[0]],
+            theta=categories + [categories[0]],
+            fill='toself',
+            name='Average %',
+            line_color='#667eea'
+        ))
+        fig_radar.update_layout(
+            polar=dict(radialaxis=dict(visible=True, range=[0, max(values) * 1.2 if values else 100])),
+            showlegend=False,
+            title="Average Preference Percentages"
+        )
+        st.plotly_chart(fig_radar, use_container_width=True)
+    
+    with chart_col2:
+        # Box plot for distribution
+        box_data = []
+        for col in LOTTERY_PCT_COLS:
+            if col in filtered.columns:
+                for val in filtered[col].dropna():
+                    box_data.append({
+                        'Preference': COLUMN_DEFINITIONS[col]['display_name'],
+                        'Percentage': val
+                    })
+        
+        if box_data:
+            box_df = pd.DataFrame(box_data)
+            fig_box = px.box(
+                box_df,
+                x='Preference',
+                y='Percentage',
+                title="Distribution of Preference Percentages",
+                color='Preference',
+                color_discrete_sequence=px.colors.qualitative.Set3
+            )
+            fig_box.update_layout(showlegend=False, xaxis_tickangle=-45)
+            st.plotly_chart(fig_box, use_container_width=True)
+    
+    # By Borough comparison
+    st.markdown("#### Preference Percentages by Borough")
+    borough_pct_data = []
+    for borough in filtered['borough'].dropna().unique():
+        borough_df = filtered[filtered['borough'] == borough]
+        row_data = {'Borough': borough}
+        for col in LOTTERY_PCT_COLS:
+            if col in borough_df.columns:
+                row_data[COLUMN_DEFINITIONS[col]['display_name']] = borough_df[col].mean()
+        borough_pct_data.append(row_data)
+    
+    borough_pct_summary = pd.DataFrame(borough_pct_data)
+    if not borough_pct_summary.empty and len(borough_pct_summary) > 1:
+        fig_grouped = px.bar(
+            borough_pct_summary,
+            x='Borough',
+            y=[COLUMN_DEFINITIONS[col]['display_name'] for col in LOTTERY_PCT_COLS if col in filtered.columns],
+            title="Average Preference % by Borough",
+            barmode='group',
+            color_discrete_sequence=px.colors.qualitative.Set3
+        )
+        st.plotly_chart(fig_grouped, use_container_width=True)
+    
+    # Data table and download
+    st.markdown("#### Detailed Data")
+    display_cols = ['lottery_name', 'borough', 'lottery_status'] + [col for col in LOTTERY_PCT_COLS if col in filtered.columns]
+    display_df = filtered[display_cols].copy()
+    display_df.columns = ['Lottery Name', 'Borough', 'Status'] + [COLUMN_DEFINITIONS[col]['display_name'] for col in LOTTERY_PCT_COLS if col in filtered.columns]
+    
+    st.dataframe(display_df, use_container_width=True, height=300)
+    
+    csv_data = convert_df_to_csv(display_df)
+    st.download_button(
+        label="📥 Download Lottery Preferences Data (CSV)",
+        data=csv_data,
+        file_name=f"lottery_preferences_{datetime.now().strftime('%Y%m%d')}.csv",
+        mime="text/csv",
+        key="download_lottery_pct"
+    )
+
+
 def main():
     """Main application function"""
     
@@ -307,18 +893,18 @@ def main():
         st.error("Unable to load lottery data. Please try again later.")
         return
     
-    # Filters section
+    # Global Filters section
     st.markdown("### 🔍 Filter Lotteries")
     
     col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
     
     with col1:
         boroughs = ["All Boroughs"] + sorted(df['borough'].dropna().unique().tolist())
-        selected_borough = st.selectbox("Borough", boroughs, key="borough_filter")
+        selected_borough = st.selectbox("Borough", boroughs, key="main_borough_filter")
     
     with col2:
         statuses = ["All Statuses", "Open", "Closed", "Filled"]
-        selected_status = st.selectbox("Status", statuses, key="status_filter")
+        selected_status = st.selectbox("Status", statuses, key="main_status_filter")
     
     with col3:
         min_date = df['lottery_start_date'].min()
@@ -327,17 +913,17 @@ def main():
         start_date = st.date_input(
             "From Date",
             value=datetime.now() - timedelta(days=30),
-            key="start_date"
+            key="main_start_date"
         )
     
     with col4:
         end_date = st.date_input(
             "To Date",
             value=datetime.now() + timedelta(days=180),
-            key="end_date"
+            key="main_end_date"
         )
     
-    # Apply filters
+    # Apply global filters
     filtered_df = filter_data(
         df,
         borough=selected_borough,
@@ -388,8 +974,14 @@ def main():
     
     st.markdown("---")
     
-    # Main content: Map and List
-    tab1, tab2 = st.tabs(["🗺️ Map View", "📋 List View"])
+    # Main content tabs
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🗺️ Map View", 
+        "📋 List View", 
+        "🏢 Unit Distribution",
+        "💰 AMI Categories",
+        "📊 Lottery Preferences"
+    ])
     
     with tab1:
         st.markdown("### Housing Lottery Locations")
@@ -403,13 +995,17 @@ def main():
     
     with tab2:
         st.markdown("### Housing Lottery Calendar")
+        st.markdown("Click on each lottery to view all details including unit distribution, AMI categories, and preferences.")
         
         if not filtered_df.empty:
-            # Sort by end date
-            sorted_df = filtered_df.sort_values('lottery_end_date', ascending=True)
+            # Sort options
+            sort_col1, sort_col2 = st.columns([2, 2])
+            with sort_col1:
+                show_open_first = st.checkbox("Show open lotteries first", value=True)
+            with sort_col2:
+                view_mode = st.radio("View Mode", ["Card View", "Detailed View", "Table View"], horizontal=True)
             
-            # Option to show only open lotteries first
-            show_open_first = st.checkbox("Show open lotteries first", value=True)
+            sorted_df = filtered_df.sort_values('lottery_end_date', ascending=True)
             
             if show_open_first:
                 open_lotteries = sorted_df[sorted_df['lottery_status'].str.contains('Open', case=False, na=False)]
@@ -425,20 +1021,63 @@ def main():
                 min_value=1,
                 max_value=total_pages,
                 value=1,
-                key="page_number"
+                key="list_page_number"
             )
             
             start_idx = (page - 1) * items_per_page
             end_idx = start_idx + items_per_page
-            
             page_df = sorted_df.iloc[start_idx:end_idx]
             
-            for _, row in page_df.iterrows():
-                display_lottery_card(row)
+            if view_mode == "Card View":
+                for _, row in page_df.iterrows():
+                    display_lottery_card(row)
+            elif view_mode == "Detailed View":
+                for _, row in page_df.iterrows():
+                    display_detailed_lottery_info(row)
+            else:  # Table View
+                # Prepare display columns with friendly names
+                table_df = page_df.copy()
+                rename_dict = {col: COLUMN_DEFINITIONS[col]['display_name'] 
+                              for col in table_df.columns if col in COLUMN_DEFINITIONS}
+                table_df = table_df.rename(columns=rename_dict)
+                st.dataframe(table_df, use_container_width=True, height=400)
             
             st.caption(f"Showing {start_idx + 1}-{min(end_idx, len(sorted_df))} of {len(sorted_df)} lotteries")
+            
+            # Download full filtered data
+            st.markdown("---")
+            full_csv = convert_df_to_csv(filtered_df)
+            st.download_button(
+                label="📥 Download All Filtered Data (CSV)",
+                data=full_csv,
+                file_name=f"nyc_housing_lotteries_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                key="download_all"
+            )
         else:
             st.info("No lotteries found matching your criteria.")
+    
+    with tab3:
+        render_unit_distribution_tab(df)
+    
+    with tab4:
+        render_ami_category_tab(df)
+    
+    with tab5:
+        render_lottery_percentage_tab(df)
+    
+    # Column Reference
+    with st.expander("📖 Column Reference Guide"):
+        st.markdown("### Data Field Descriptions")
+        ref_data = []
+        for col, info in COLUMN_DEFINITIONS.items():
+            ref_data.append({
+                "Field Name": col,
+                "Display Name": info['display_name'],
+                "Description": info['description']
+            })
+        ref_df = pd.DataFrame(ref_data)
+        st.dataframe(ref_df, use_container_width=True, height=400)
     
     # Footer
     st.markdown("---")
