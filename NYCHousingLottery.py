@@ -1,3 +1,4 @@
+```python
 """
 NYC Housing Lottery Finder
 A Streamlit app to browse, map, and analyze NYC affordable housing lotteries
@@ -62,7 +63,7 @@ COLUMN_DEFINITIONS = {
     "longitude": {"display_name": "Longitude", "description": "Geographic longitude coordinate"},
 }
 
-# “Canonical” lists (we will resolve aliases dynamically at runtime)
+# Canonical (used for conversion attempts; UI will be schema-aware)
 UNIT_DIST_COLS = [
     "unit_distribution_studio",
     "unit_distribution_1_bedroom",
@@ -87,6 +88,15 @@ LOTTERY_PCT_COLS = [
     "lottery_municipal_employee_military_veteran_percentage",
     "lottery_nycha_percentage",
     "lottery_senior_percentage",
+]
+
+# ✅ Always show these five unit sizes in the UI (even if missing in API response)
+UNIT_SIZE_CATALOG: List[Dict[str, object]] = [
+    {"key": "studio", "label": "Studio", "candidates": ["unit_distribution_studio", "studio_units", "studios"]},
+    {"key": "1br", "label": "1BR", "candidates": ["unit_distribution_1_bedroom", "unit_distribution_1_bedrooms", "1_bedroom_units", "one_bedroom_units", "unit_1br"]},
+    {"key": "2br", "label": "2BR", "candidates": ["unit_distribution_2_bedrooms", "unit_distribution_2_bedroom", "2_bedroom_units", "two_bedroom_units", "unit_2br"]},
+    {"key": "3br", "label": "3BR", "candidates": ["unit_distribution_3_bedrooms", "unit_distribution_3_bedroom", "3_bedroom_units", "three_bedroom_units", "unit_3br"]},
+    {"key": "4br", "label": "4+BR", "candidates": ["unit_distribution_4_bedroom", "unit_distribution_4_bedrooms", "4_bedroom_units", "four_bedroom_units", "unit_4br", "unit_distribution_4_plus"]},
 ]
 
 
@@ -145,7 +155,7 @@ st.markdown(
 
 
 # ---------------------------
-# Schema resolution helpers (fix “only studios” + missing tab fields)
+# Schema resolution helpers
 # ---------------------------
 def resolve_first_existing(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
     for c in candidates:
@@ -176,51 +186,29 @@ def detect_related_columns(df: pd.DataFrame, keywords: List[str]) -> List[str]:
     return sorted(hits)
 
 
-def resolve_unit_distribution_columns(df: pd.DataFrame) -> Dict[str, Tuple[str, str]]:
+def resolve_unit_distribution_columns(df: pd.DataFrame) -> Dict[str, Tuple[Optional[str], str]]:
     """
-    logical_key -> (actual_column_name, label)
+    Returns: key -> (actual_col_or_None, label)
+    Always includes all 5 sizes (actual col may be None if missing).
     """
-    alias_map = {
-        "studio": (["unit_distribution_studio", "studio_units", "studios"], "Studio"),
-        "1br": (["unit_distribution_1_bedroom", "unit_distribution_1_bedrooms", "1_bedroom_units", "one_bedroom_units", "unit_1br"], "1BR"),
-        "2br": (["unit_distribution_2_bedrooms", "unit_distribution_2_bedroom", "2_bedroom_units", "two_bedroom_units", "unit_2br"], "2BR"),
-        "3br": (["unit_distribution_3_bedrooms", "unit_distribution_3_bedroom", "3_bedroom_units", "three_bedroom_units", "unit_3br"], "3BR"),
-        "4br": (["unit_distribution_4_bedroom", "unit_distribution_4_bedrooms", "4_bedroom_units", "four_bedroom_units", "unit_4br", "unit_distribution_4_plus"], "4+BR"),
-    }
-    resolved: Dict[str, Tuple[str, str]] = {}
-    for logical, (candidates, label) in alias_map.items():
+    resolved: Dict[str, Tuple[Optional[str], str]] = {}
+    for item in UNIT_SIZE_CATALOG:
+        key = str(item["key"])
+        label = str(item["label"])
+        candidates = list(item["candidates"])  # type: ignore
         actual = resolve_first_existing(df, candidates)
-        if actual:
-            resolved[logical] = (actual, label)
+        resolved[key] = (actual, label)
     return resolved
 
 
 def resolve_ami_columns(df: pd.DataFrame) -> Dict[str, Tuple[str, str]]:
     alias_map = {
-        "eli": (
-            ["applied_income_ami_category_extremely_low_income", "extremely_low_income", "ami_extremely_low", "ami_0_30"],
-            "Extremely Low (0–30% AMI)",
-        ),
-        "vli": (
-            ["applied_income_ami_category_very_low_income", "very_low_income", "ami_very_low", "ami_31_50"],
-            "Very Low (31–50% AMI)",
-        ),
-        "li": (
-            ["applied_income_ami_category_low_income", "low_income", "ami_low", "ami_51_80"],
-            "Low (51–80% AMI)",
-        ),
-        "mod": (
-            ["applied_income_ami_category_moderate_income", "moderate_income", "ami_moderate", "ami_81_120"],
-            "Moderate (81–120% AMI)",
-        ),
-        "mid": (
-            ["applied_income_ami_category_middle_income", "middle_income", "ami_middle", "ami_121_165"],
-            "Middle (121–165% AMI)",
-        ),
-        "above": (
-            ["applied_income_ami_category_above_middle_income", "above_middle_income", "ami_above_middle", "ami_165_plus"],
-            "Above Middle (165%+ AMI)",
-        ),
+        "eli": (["applied_income_ami_category_extremely_low_income", "extremely_low_income", "ami_extremely_low", "ami_0_30"], "Extremely Low (0–30% AMI)"),
+        "vli": (["applied_income_ami_category_very_low_income", "very_low_income", "ami_very_low", "ami_31_50"], "Very Low (31–50% AMI)"),
+        "li": (["applied_income_ami_category_low_income", "low_income", "ami_low", "ami_51_80"], "Low (51–80% AMI)"),
+        "mod": (["applied_income_ami_category_moderate_income", "moderate_income", "ami_moderate", "ami_81_120"], "Moderate (81–120% AMI)"),
+        "mid": (["applied_income_ami_category_middle_income", "middle_income", "ami_middle", "ami_121_165"], "Middle (121–165% AMI)"),
+        "above": (["applied_income_ami_category_above_middle_income", "above_middle_income", "ami_above_middle", "ami_165_plus"], "Above Middle (165%+ AMI)"),
     }
     resolved: Dict[str, Tuple[str, str]] = {}
     for logical, (candidates, label) in alias_map.items():
@@ -269,10 +257,6 @@ def _to_timestamp(d: Optional[date | datetime]) -> Optional[pd.Timestamp]:
 # ---------------------------
 @st.cache_data(ttl=3600)
 def fetch_lottery_data() -> pd.DataFrame:
-    """
-    Fetch housing lottery data from NYC Open Data Socrata API.
-    Note: Socrata fields can change; the UI resolves columns dynamically.
-    """
     api_url = "https://data.cityofnewyork.us/resource/vy5i-a666.json"
     params = {"$limit": 5000, "$order": "lottery_end_date DESC"}
 
@@ -473,13 +457,13 @@ def display_detailed_lottery_info(row: pd.Series) -> None:
         with col2:
             st.markdown("#### Unit Distribution")
             resolved_units = resolve_unit_distribution_columns(pd.DataFrame([row]))
-            if not resolved_units:
-                st.info("No unit distribution fields are present for this record.")
-            else:
-                for _, (colname, label) in resolved_units.items():
+            for _, (colname, label) in resolved_units.items():
+                if colname and colname in row.index:
                     val = row.get(colname, 0)
-                    val = 0 if pd.isna(val) else val
-                    st.markdown(f"**{label}:** {int(float(val))}")
+                else:
+                    val = 0
+                val = 0 if pd.isna(val) else val
+                st.markdown(f"**{label}:** {int(float(val))}")
 
             st.markdown("#### Location")
             for key in ["borough", "postcode", "community_board"]:
@@ -537,102 +521,117 @@ def render_unit_distribution_tab(df: pd.DataFrame) -> None:
         st.warning("No data available for the selected filters.")
         return
 
+    # ✅ Always resolve all 5 sizes; missing columns become zeros
     resolved = resolve_unit_distribution_columns(filtered)
-    if not resolved:
-        st.info(
-            "Unit distribution columns were not found in the dataset response. "
-            "This usually means the dataset schema changed. See detected unit-related columns below."
-        )
-        candidates = detect_related_columns(filtered, ["unit", "bed", "studio"])
-        if candidates:
-            st.caption("Possible unit-related columns detected:")
-            st.code(", ".join(candidates)[:2000])
-        return
 
-    # Unit size selector (fix: allow all unit distributions, not just studios)
-    unit_labels = [label for (_, label) in resolved.values()]
+    # Always show all five sizes in the filter
+    all_labels = [label for (_, label) in resolved.values()]
     selected_labels = st.multiselect(
         "Unit sizes to include",
-        options=unit_labels,
-        default=unit_labels,
-        help="Select which unit sizes to include in the analysis.",
+        options=all_labels,
+        default=all_labels,
+        help="All five unit sizes are shown. If a size is missing from the dataset response, it will display as 0.",
         key="ud_unit_sizes",
     )
 
     chart_mode = st.radio("Chart view", ["Both", "Pie", "Bar"], horizontal=True, key="ud_chart_mode")
-    include_zeros = st.checkbox("Include unit sizes with zero total", value=False, key="ud_include_zeros")
+    include_zeros_in_charts = st.checkbox(
+        "Include zero categories in charts",
+        value=False,
+        help="Bar charts can include zeros; pie charts usually look better without zeros.",
+        key="ud_include_zeros_in_charts",
+    )
 
-    label_to_actual = {label: actual for (_, (actual, label)) in resolved.items()}
+    # Build label->actual map (actual may be None)
+    label_to_actual: Dict[str, Optional[str]] = {}
+    for _, (actual, label) in resolved.items():
+        label_to_actual[label] = actual
 
+    # Totals (missing columns => 0)
     totals: Dict[str, float] = {}
     for lbl in selected_labels:
-        col = label_to_actual.get(lbl)
-        if col and col in filtered.columns:
-            totals[lbl] = safe_numeric_sum(filtered[col])
+        actual = label_to_actual.get(lbl)
+        if actual and actual in filtered.columns:
+            totals[lbl] = safe_numeric_sum(filtered[actual])
+        else:
+            totals[lbl] = 0.0
 
-    if not totals:
-        st.info("No unit totals could be calculated for the selected unit sizes.")
-        return
-
-    totals_for_chart = totals if include_zeros else {k: v for k, v in totals.items() if v > 0}
-    if not totals_for_chart:
-        st.info("All selected unit sizes have zero totals for these filters.")
-        return
-
+    # Summary table should always show selected categories (including zeros)
     summary_df = (
-        pd.DataFrame({"Unit Size": list(totals_for_chart.keys()), "Units": list(totals_for_chart.values())})
-        .sort_values("Units", ascending=False)
+        pd.DataFrame({"Unit Size": list(totals.keys()), "Units": list(totals.values())})
+        .sort_values("Unit Size")
         .reset_index(drop=True)
     )
-    summary_df["Share"] = (summary_df["Units"] / summary_df["Units"].sum()).map(lambda x: f"{x:.1%}")
+
+    # Friendly ordering Studio, 1BR, 2BR, 3BR, 4+BR
+    order = {"Studio": 0, "1BR": 1, "2BR": 2, "3BR": 3, "4+BR": 4}
+    summary_df["__order"] = summary_df["Unit Size"].map(lambda x: order.get(x, 99))
+    summary_df = summary_df.sort_values("__order").drop(columns="__order").reset_index(drop=True)
+
+    total_units_all = float(summary_df["Units"].sum())
+    if total_units_all > 0:
+        summary_df["Share"] = (summary_df["Units"] / total_units_all).map(lambda x: f"{x:.1%}")
+    else:
+        summary_df["Share"] = "0.0%"
 
     st.markdown("#### Summary")
     st.dataframe(summary_df, width="stretch", height=230)
 
-    # Charts (Pie is often better; you can pick Both)
-    chart_col1, chart_col2 = st.columns(2)
+    # Prepare chart dataframe (optionally drop zeros)
+    chart_df = summary_df.copy()
+    if not include_zeros_in_charts:
+        chart_df = chart_df[chart_df["Units"] > 0].copy()
 
-    if chart_mode in ("Both", "Pie"):
-        with chart_col1:
-            fig_pie = px.pie(
-                summary_df,
-                values="Units",
-                names="Unit Size",
-                title="Unit Distribution by Size",
-                hole=0.35,
-            )
-            fig_pie.update_traces(textposition="inside", textinfo="percent+label")
-            st.plotly_chart(fig_pie, width="stretch")
+    if chart_df.empty:
+        st.info("All selected unit sizes are 0 for these filters (or missing in the dataset response).")
+    else:
+        chart_col1, chart_col2 = st.columns(2)
 
-    if chart_mode in ("Both", "Bar"):
-        with (chart_col2 if chart_mode == "Both" else chart_col1):
-            fig_bar = px.bar(
-                summary_df,
-                x="Unit Size",
-                y="Units",
-                title="Total Units by Size",
-                labels={"Units": "Number of Units"},
-            )
-            fig_bar.update_layout(showlegend=False)
-            st.plotly_chart(fig_bar, width="stretch")
+        if chart_mode in ("Both", "Pie"):
+            with chart_col1:
+                fig_pie = px.pie(
+                    chart_df,
+                    values="Units",
+                    names="Unit Size",
+                    title="Unit Distribution by Size",
+                    hole=0.35,
+                )
+                fig_pie.update_traces(textposition="inside", textinfo="percent+label")
+                st.plotly_chart(fig_pie, width="stretch")
 
-    # Detailed table + download
+        if chart_mode in ("Both", "Bar"):
+            with (chart_col2 if chart_mode == "Both" else chart_col1):
+                fig_bar = px.bar(
+                    chart_df,
+                    x="Unit Size",
+                    y="Units",
+                    title="Total Units by Size",
+                    labels={"Units": "Number of Units"},
+                )
+                fig_bar.update_layout(showlegend=False)
+                st.plotly_chart(fig_bar, width="stretch")
+
+    # Detailed table: always show all five columns (computed if missing)
     st.markdown("#### Detailed Data")
     base_cols = [c for c in ["lottery_name", "borough", "lottery_status", "development_type"] if c in filtered.columns]
-    selected_actual_cols = [label_to_actual[l] for l in selected_labels if l in label_to_actual and label_to_actual[l] in filtered.columns]
-    display_cols = base_cols + selected_actual_cols
+    display_df = filtered[base_cols].copy()
 
-    display_df = filtered[display_cols].copy()
+    # Add computed columns for each selected label
+    for lbl in selected_labels:
+        actual = label_to_actual.get(lbl)
+        out_col = f"{lbl} Units"
+        if actual and actual in filtered.columns:
+            display_df[out_col] = pd.to_numeric(filtered[actual], errors="coerce").fillna(0).astype(int)
+        else:
+            display_df[out_col] = 0
+
+    # Rename base columns
     rename_map = {
         "lottery_name": "Lottery Name",
         "borough": "Borough",
         "lottery_status": "Status",
         "development_type": "Development Type",
     }
-    for lbl in selected_labels:
-        col = label_to_actual.get(lbl)
-        if col and col in display_df.columns:
-            rename_map[col] = f"{lbl} Units"
     display_df = display_df.rename(columns=rename_map)
 
     st.dataframe(display_df, width="stretch", height=350)
@@ -643,6 +642,11 @@ def render_unit_distribution_tab(df: pd.DataFrame) -> None:
         mime="text/csv",
         key="download_unit_dist",
     )
+
+    # Helpful diagnostics (collapsed)
+    with st.expander("🔎 Diagnostics (optional)"):
+        st.caption("If unit sizes are all 0, the dataset response may not contain those fields or they may be empty.")
+        st.write("Detected unit-related columns:", detect_related_columns(filtered, ["unit", "bed", "studio"]))
 
 
 def render_ami_category_tab(df: pd.DataFrame) -> None:
@@ -700,13 +704,13 @@ def render_ami_category_tab(df: pd.DataFrame) -> None:
         if col and col in filtered.columns:
             totals[lbl] = safe_numeric_sum(filtered[col])
 
-    totals = {k: v for k, v in totals.items() if v > 0}
-    if not totals:
+    totals_nonzero = {k: v for k, v in totals.items() if v > 0}
+    if not totals_nonzero:
         st.info("No AMI category totals available (all zero/missing) for these filters.")
         return
 
     summary_df = (
-        pd.DataFrame({"AMI Category": list(totals.keys()), "Units": list(totals.values())})
+        pd.DataFrame({"AMI Category": list(totals_nonzero.keys()), "Units": list(totals_nonzero.values())})
         .sort_values("Units", ascending=False)
         .reset_index(drop=True)
     )
@@ -725,7 +729,6 @@ def render_ami_category_tab(df: pd.DataFrame) -> None:
         figb.update_layout(showlegend=False, xaxis_tickangle=-30)
         st.plotly_chart(figb, width="stretch")
 
-    # Trend over time (only if start dates exist)
     st.markdown("#### AMI Distribution Over Time")
     if "lottery_start_date" in filtered.columns:
         time_data = filtered.dropna(subset=["lottery_start_date"]).copy()
@@ -734,7 +737,6 @@ def render_ami_category_tab(df: pd.DataFrame) -> None:
             cols = [label_to_actual[lbl] for lbl in selected if lbl in label_to_actual and label_to_actual[lbl] in filtered.columns]
             if cols:
                 tg = time_data.groupby("year_month")[cols].sum(numeric_only=True).reset_index()
-                # Rename to friendly
                 rename = {"year_month": "Period"}
                 for lbl in selected:
                     col = label_to_actual.get(lbl)
@@ -753,18 +755,12 @@ def render_ami_category_tab(df: pd.DataFrame) -> None:
     else:
         st.info("No start-date field available to plot trends.")
 
-    # Detailed + download
     st.markdown("#### Detailed Data")
     base_cols = [c for c in ["lottery_name", "borough", "lottery_status", "development_type"] if c in filtered.columns]
     cols = [label_to_actual[lbl] for lbl in selected if lbl in label_to_actual and label_to_actual[lbl] in filtered.columns]
     display_df = filtered[base_cols + cols].copy()
 
-    rename_map = {
-        "lottery_name": "Lottery Name",
-        "borough": "Borough",
-        "lottery_status": "Status",
-        "development_type": "Development Type",
-    }
+    rename_map = {"lottery_name": "Lottery Name", "borough": "Borough", "lottery_status": "Status", "development_type": "Development Type"}
     for lbl in selected:
         col = label_to_actual.get(lbl)
         if col in display_df.columns:
@@ -830,7 +826,6 @@ NYC Housing Lotteries may reserve percentages of units for:
     selected = st.multiselect("Preferences to include", labels, default=labels, key="lp_select")
     label_to_actual = {label: actual for (_, (actual, label)) in resolved.items()}
 
-    # Averages (percentages)
     avgs: Dict[str, float] = {}
     for lbl in selected:
         col = label_to_actual.get(lbl)
@@ -864,18 +859,12 @@ NYC Housing Lotteries may reserve percentages of units for:
         figb.update_layout(showlegend=False, xaxis_tickangle=-30)
         st.plotly_chart(figb, width="stretch")
 
-    # Detailed + download
     st.markdown("#### Detailed Data")
     base_cols = [c for c in ["lottery_name", "borough", "lottery_status", "development_type"] if c in filtered.columns]
     cols = [label_to_actual[lbl] for lbl in selected if lbl in label_to_actual and label_to_actual[lbl] in filtered.columns]
     display_df = filtered[base_cols + cols].copy()
 
-    rename_map = {
-        "lottery_name": "Lottery Name",
-        "borough": "Borough",
-        "lottery_status": "Status",
-        "development_type": "Development Type",
-    }
+    rename_map = {"lottery_name": "Lottery Name", "borough": "Borough", "lottery_status": "Status", "development_type": "Development Type"}
     for lbl in selected:
         col = label_to_actual.get(lbl)
         if col in display_df.columns:
@@ -913,7 +902,6 @@ def main() -> None:
         st.error("Unable to load lottery data. Please try again later.")
         return
 
-    # Global filters
     st.markdown("### 🔍 Filter Lotteries")
     col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
 
@@ -932,7 +920,6 @@ def main() -> None:
 
     filtered_df = filter_data(df, borough=selected_borough, status=selected_status, start_date=start_date, end_date=end_date)
 
-    # Stats
     st.markdown("### 📊 Summary Statistics")
     stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
 
@@ -995,10 +982,8 @@ def main() -> None:
     with tab1:
         st.markdown("### Housing Lottery Locations")
         st.caption("Click on markers for details. Green = Open, Red = Filled, Blue = Other")
-
         if not filtered_df.empty:
             lottery_map = create_map(filtered_df)
-            # streamlit-folium compatibility: avoid width=None and use_container_width
             st_folium(lottery_map, height=500)
         else:
             st.info("No lotteries found matching your criteria.")
@@ -1062,15 +1047,13 @@ def main() -> None:
     with tab5:
         render_lottery_percentage_tab(df)
 
-    # Column reference
     with st.expander("📖 Column Reference Guide"):
         ref_df = pd.DataFrame(
             [{"Field Name": c, "Display Name": info["display_name"], "Description": info["description"]} for c, info in COLUMN_DEFINITIONS.items()]
         )
         st.dataframe(ref_df, width="stretch", height=420)
-        st.caption("Tip: If a tab says fields are missing, compare these names against df.columns from the dataset response.")
+        st.caption("If a tab says fields are missing, compare these names against df.columns from the dataset response.")
 
-    # Footer
     st.markdown("---")
     st.markdown(
         """
@@ -1086,3 +1069,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+```
