@@ -96,6 +96,93 @@ def safe_num(s: pd.Series) -> pd.Series:
 # Data fetch + enrichment
 # ---------------------------
 @st.cache_data(ttl=3600)
+
+# ---------------------------
+# List view rendering helpers
+# ---------------------------
+def get_status_class(status: str) -> str:
+    s = (status or "").lower()
+    if "open" in s:
+        return "status-open"
+    if "filled" in s:
+        return "status-filled"
+    # treat active/closed/other as closed styling
+    return "status-closed"
+
+
+def _get_unit_value(row: pd.Series, candidates: list[str]) -> int:
+    """Return the first non-null numeric unit count from candidate columns."""
+    for c in candidates:
+        if c in row.index:
+            v = pd.to_numeric(row.get(c), errors="coerce")
+            if pd.notna(v):
+                return int(float(v))
+    return 0
+
+
+def display_lottery_card(row: pd.Series) -> None:
+    status_class = get_status_class(str(row.get("lottery_status", "")))
+    start_dt = pd.to_datetime(row.get("lottery_start_date", pd.NaT), errors="coerce")
+    end_dt = pd.to_datetime(row.get("lottery_end_date", pd.NaT), errors="coerce")
+    start_str = start_dt.strftime("%b %d, %Y") if pd.notna(start_dt) else "TBD"
+    end_str = end_dt.strftime("%b %d, %Y") if pd.notna(end_dt) else "TBD"
+
+    st.markdown(
+        f"""
+<div class="lottery-card {status_class}">
+  <h3>🏠 {row.get('lottery_name', 'N/A')}</h3>
+  <p><strong>🆔 Lottery ID:</strong> {row.get('lottery_id', 'N/A')}</p>
+  <p><strong>📍 Borough:</strong> {row.get('borough', 'N/A')}</p>
+  <p><strong>📋 Status:</strong> {row.get('lottery_status', 'N/A')}</p>
+  <p><strong>🏗️ Type:</strong> {row.get('development_type', 'N/A')}</p>
+  <p><strong>🏢 Total Units:</strong> {int(pd.to_numeric(row.get('unit_count', 0), errors='coerce') or 0):,}</p>
+  <p><strong>📅 Application Period:</strong> {start_str} – {end_str}</p>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def display_detailed_lottery_info(row: pd.Series) -> None:
+    title = f"🏠 {row.get('lottery_name', 'N/A')} — {row.get('lottery_status', 'N/A')}"
+    with st.expander(title, expanded=False):
+        c1, c2, c3 = st.columns(3)
+
+        with c1:
+            st.markdown("#### Basic")
+            st.write("**Lottery ID:**", row.get("lottery_id", "N/A"))
+            st.write("**Borough:**", row.get("borough", "N/A"))
+            st.write("**Status:**", row.get("lottery_status", "N/A"))
+            st.write("**Type:**", row.get("development_type", "N/A"))
+            st.write("**Total Units:**", int(pd.to_numeric(row.get("unit_count", 0), errors="coerce") or 0))
+
+            sd = pd.to_datetime(row.get("lottery_start_date", pd.NaT), errors="coerce")
+            ed = pd.to_datetime(row.get("lottery_end_date", pd.NaT), errors="coerce")
+            st.write("**Start Date:**", sd.strftime("%m/%d/%Y") if pd.notna(sd) else "N/A")
+            st.write("**End Date:**", ed.strftime("%m/%d/%Y") if pd.notna(ed) else "N/A")
+
+        with c2:
+            st.markdown("#### Unit distribution")
+            # These candidates cover both the canonical names and the observed *_1bed style from the dataset.
+            studio = _get_unit_value(row, ["unit_distribution_studio", "unit_distribution_studios", "studio_units", "studios"])
+            br1 = _get_unit_value(row, ["unit_distribution_1_bedroom", "unit_distribution_1_bedrooms", "unit_distribution_1bed", "unit_distribution_1br"])
+            br2 = _get_unit_value(row, ["unit_distribution_2_bedrooms", "unit_distribution_2_bedroom", "unit_distribution_2bed", "unit_distribution_2br"])
+            br3 = _get_unit_value(row, ["unit_distribution_3_bedrooms", "unit_distribution_3_bedroom", "unit_distribution_3bed", "unit_distribution_3br"])
+            br4 = _get_unit_value(row, ["unit_distribution_4_bedroom", "unit_distribution_4_bedrooms", "unit_distribution_4bed", "unit_distribution_4br", "unit_distribution_4_plus"])
+
+            st.write("**Studio:**", studio)
+            st.write("**1BR:**", br1)
+            st.write("**2BR:**", br2)
+            st.write("**3BR:**", br3)
+            st.write("**4+BR:**", br4)
+
+        with c3:
+            st.markdown("#### Location")
+            st.write("**Zip:**", row.get("postcode", "N/A"))
+            st.write("**Community Board:**", row.get("community_board", "N/A"))
+            st.write("**Latitude:**", row.get("latitude", "N/A"))
+            st.write("**Longitude:**", row.get("longitude", "N/A"))
+
 def fetch_lottery_data() -> pd.DataFrame:
     api_url = "https://data.cityofnewyork.us/resource/vy5i-a666.json"
     params = {"$limit": 5000, "$order": "lottery_end_date DESC"}
@@ -454,30 +541,56 @@ def main() -> None:
         else:
             st_folium(create_map(filtered_df), height=520)
 
-    with tab2:
-        st.subheader("Housing Lottery Calendar")
+        with tab2:
+        st.markdown("### Housing Lottery Calendar")
+        st.markdown("Browse lotteries in **Card**, **Detailed**, or **Table** view. All views use the same enriched dataframe.")
+
         if filtered_df.empty:
-            st.info("No lotteries match your filters.")
+            st.info("No lotteries found matching your criteria.")
         else:
-            view_mode = st.radio("View Mode", ["Table View"], horizontal=True, key="lv_mode")
-            table = filtered_df.copy()
+            sort_col1, sort_col2 = st.columns([2, 2])
+            with sort_col1:
+                show_open_first = st.checkbox("Show open lotteries first", value=True, key="lv_open_first")
+            with sort_col2:
+                view_mode = st.radio("View Mode", ["Card View", "Detailed View", "Table View"], horizontal=True, key="lv_view_mode")
 
-            # Show normalized unit columns too (so user can verify alignment)
-            for label in UNIT_SIZE_LABELS:
-                table[f"{label} Units"] = table[NORM_UNIT_COLS[label]].astype(int)
+            sorted_df = filtered_df.sort_values("lottery_end_date", ascending=True) if "lottery_end_date" in filtered_df.columns else filtered_df.copy()
 
-            # Keep columns readable
-            cols = [c for c in ["lottery_id", "lottery_name", "lottery_status", "development_type", "lottery_start_date", "lottery_end_date", "unit_count"] if c in table.columns]
-            cols += [f"{label} Units" for label in UNIT_SIZE_LABELS]
-            st.dataframe(table[cols], width="stretch", height=520)
+            if show_open_first and "lottery_status" in sorted_df.columns:
+                is_open = sorted_df["lottery_status"].astype(str).str.contains("Open", case=False, na=False)
+                sorted_df = pd.concat([sorted_df[is_open], sorted_df[~is_open]])
 
+            items_per_page = 10
+            total_pages = max(1, (len(sorted_df) - 1) // items_per_page + 1)
+
+            page = st.number_input("Page", min_value=1, max_value=total_pages, value=1, key="list_page_number")
+            start_idx = (page - 1) * items_per_page
+            end_idx = start_idx + items_per_page
+            page_df = sorted_df.iloc[start_idx:end_idx]
+
+            if view_mode == "Card View":
+                for _, row in page_df.iterrows():
+                    display_lottery_card(row)
+
+            elif view_mode == "Detailed View":
+                for _, row in page_df.iterrows():
+                    display_detailed_lottery_info(row)
+
+            else:
+                # Table View (keep raw columns visible; it's the best for troubleshooting)
+                st.dataframe(page_df, width="stretch", height=420)
+
+            st.caption(f"Showing {start_idx + 1}-{min(end_idx, len(sorted_df))} of {len(sorted_df)} lotteries")
+
+            st.markdown("---")
             st.download_button(
-                "📥 Download Filtered Data (CSV)",
-                data=convert_df_to_csv(table[cols]),
+                "📥 Download All Filtered Data (CSV)",
+                data=convert_df_to_csv(filtered_df),
                 file_name=f"nyc_housing_lotteries_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv",
-                key="lv_dl",
+                key="download_all",
             )
+
 
     with tab3:
         render_unit_distribution_tab(df)
