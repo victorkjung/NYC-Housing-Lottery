@@ -1,9 +1,10 @@
-
 """
 NYC Housing Lottery Finder
 A Streamlit app to browse, map, and analyze NYC affordable housing lotteries.
-- Adds schema-aware enrichment so List View + Unit Distribution use the same normalized bedroom-count fields.
-- Adds Unit Distribution date-range presets + slider + trend analysis over time.
+
+Key guarantees:
+- One single enriched dataframe (normalized unit-size fields) used by BOTH List View and Unit Distribution.
+- Unit Distribution includes preset chips + optional custom date range + trend analysis (monthly totals + mix).
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from datetime import datetime, timedelta, date
 import folium
 from streamlit_folium import st_folium
 import plotly.express as px
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict
 
 
 # ---------------------------
@@ -36,10 +37,43 @@ UNIT_SIZE_LABELS = ["Studio", "1BR", "2BR", "3BR", "4+BR"]
 # Candidate column names (NYC Open Data sometimes changes field names)
 UNIT_SIZE_CANDIDATES: Dict[str, List[str]] = {
     "Studio": ["unit_distribution_studio", "unit_distribution_studios", "studio_units", "studios"],
-    "1BR": ["unit_distribution_1_bedroom", "unit_distribution_1_bedrooms", "unit_distribution_1bed", "unit_distribution_1bedroom", "1_bedroom_units", "one_bedroom_units", "unit_1br"],
-    "2BR": ["unit_distribution_2_bedrooms", "unit_distribution_2_bedroom", "unit_distribution_2bed", "unit_distribution_2bedroom", "2_bedroom_units", "two_bedroom_units", "unit_2br"],
-    "3BR": ["unit_distribution_3_bedrooms", "unit_distribution_3_bedroom", "unit_distribution_3bed", "unit_distribution_3bedroom", "3_bedroom_units", "three_bedroom_units", "unit_3br"],
-    "4+BR": ["unit_distribution_4_bedroom", "unit_distribution_4_bedrooms", "unit_distribution_4bed", "unit_distribution_4bedroom", "4_bedroom_units", "four_bedroom_units", "unit_4br", "unit_distribution_4_plus"],
+    "1BR": [
+        "unit_distribution_1_bedroom",
+        "unit_distribution_1_bedrooms",
+        "unit_distribution_1bed",
+        "unit_distribution_1bedroom",
+        "1_bedroom_units",
+        "one_bedroom_units",
+        "unit_1br",
+    ],
+    "2BR": [
+        "unit_distribution_2_bedrooms",
+        "unit_distribution_2_bedroom",
+        "unit_distribution_2bed",
+        "unit_distribution_2bedroom",
+        "2_bedroom_units",
+        "two_bedroom_units",
+        "unit_2br",
+    ],
+    "3BR": [
+        "unit_distribution_3_bedrooms",
+        "unit_distribution_3_bedroom",
+        "unit_distribution_3bed",
+        "unit_distribution_3bedroom",
+        "3_bedroom_units",
+        "three_bedroom_units",
+        "unit_3br",
+    ],
+    "4+BR": [
+        "unit_distribution_4_bedroom",
+        "unit_distribution_4_bedrooms",
+        "unit_distribution_4bed",
+        "unit_distribution_4bedroom",
+        "4_bedroom_units",
+        "four_bedroom_units",
+        "unit_4br",
+        "unit_distribution_4_plus",
+    ],
 }
 
 # Normalized columns added by enrich_dataframe()
@@ -52,7 +86,7 @@ NORM_UNIT_COLS: Dict[str, str] = {
 }
 
 # ---------------------------
-# Light CSS (keeps your dark theme-friendly spacing)
+# CSS
 # ---------------------------
 st.markdown(
     """
@@ -61,6 +95,22 @@ st.markdown(
     .block-container { padding: 1rem 0.5rem; }
     .stSelectbox, .stDateInput { min-width: 100%; }
   }
+
+  .lottery-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 12px;
+    padding: 1.2rem;
+    margin: 0.8rem 0;
+    color: white;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.12);
+  }
+  .lottery-card h3 { margin: 0 0 0.5rem 0; font-size: 1.1rem; color: white; }
+  .lottery-card p { margin: 0.25rem 0; font-size: 0.92rem; opacity: 0.95; }
+
+  .status-open  { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+  .status-closed{ background: linear-gradient(135deg, #636363 0%, #a2ab58 100%); }
+  .status-filled{ background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%); }
+
   #MainMenu {visibility: hidden;}
   footer {visibility: hidden;}
 </style>
@@ -78,11 +128,6 @@ def _to_timestamp(d: Optional[date | datetime]) -> Optional[pd.Timestamp]:
         return pd.Timestamp(d.date())
     return pd.Timestamp(d)
 
-def _safe_str_series(df: pd.DataFrame, col: str) -> pd.Series:
-    if col not in df.columns:
-        return pd.Series([], dtype="object")
-    return df[col].astype(str)
-
 def first_existing(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
     for c in candidates:
         if c in df.columns:
@@ -92,105 +137,22 @@ def first_existing(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
 def safe_num(s: pd.Series) -> pd.Series:
     return pd.to_numeric(s, errors="coerce").fillna(0)
 
+def convert_df_to_csv(df: pd.DataFrame) -> bytes:
+    return df.to_csv(index=False).encode("utf-8")
+
 # ---------------------------
 # Data fetch + enrichment
 # ---------------------------
 @st.cache_data(ttl=3600)
-
-# ---------------------------
-# List view rendering helpers
-# ---------------------------
-def get_status_class(status: str) -> str:
-    s = (status or "").lower()
-    if "open" in s:
-        return "status-open"
-    if "filled" in s:
-        return "status-filled"
-    # treat active/closed/other as closed styling
-    return "status-closed"
-
-
-def _get_unit_value(row: pd.Series, candidates: list[str]) -> int:
-    """Return the first non-null numeric unit count from candidate columns."""
-    for c in candidates:
-        if c in row.index:
-            v = pd.to_numeric(row.get(c), errors="coerce")
-            if pd.notna(v):
-                return int(float(v))
-    return 0
-
-
-def display_lottery_card(row: pd.Series) -> None:
-    status_class = get_status_class(str(row.get("lottery_status", "")))
-    start_dt = pd.to_datetime(row.get("lottery_start_date", pd.NaT), errors="coerce")
-    end_dt = pd.to_datetime(row.get("lottery_end_date", pd.NaT), errors="coerce")
-    start_str = start_dt.strftime("%b %d, %Y") if pd.notna(start_dt) else "TBD"
-    end_str = end_dt.strftime("%b %d, %Y") if pd.notna(end_dt) else "TBD"
-
-    st.markdown(
-        f"""
-<div class="lottery-card {status_class}">
-  <h3>🏠 {row.get('lottery_name', 'N/A')}</h3>
-  <p><strong>🆔 Lottery ID:</strong> {row.get('lottery_id', 'N/A')}</p>
-  <p><strong>📍 Borough:</strong> {row.get('borough', 'N/A')}</p>
-  <p><strong>📋 Status:</strong> {row.get('lottery_status', 'N/A')}</p>
-  <p><strong>🏗️ Type:</strong> {row.get('development_type', 'N/A')}</p>
-  <p><strong>🏢 Total Units:</strong> {int(pd.to_numeric(row.get('unit_count', 0), errors='coerce') or 0):,}</p>
-  <p><strong>📅 Application Period:</strong> {start_str} – {end_str}</p>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-
-
-def display_detailed_lottery_info(row: pd.Series) -> None:
-    title = f"🏠 {row.get('lottery_name', 'N/A')} — {row.get('lottery_status', 'N/A')}"
-    with st.expander(title, expanded=False):
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-            st.markdown("#### Basic")
-            st.write("**Lottery ID:**", row.get("lottery_id", "N/A"))
-            st.write("**Borough:**", row.get("borough", "N/A"))
-            st.write("**Status:**", row.get("lottery_status", "N/A"))
-            st.write("**Type:**", row.get("development_type", "N/A"))
-            st.write("**Total Units:**", int(pd.to_numeric(row.get("unit_count", 0), errors="coerce") or 0))
-
-            sd = pd.to_datetime(row.get("lottery_start_date", pd.NaT), errors="coerce")
-            ed = pd.to_datetime(row.get("lottery_end_date", pd.NaT), errors="coerce")
-            st.write("**Start Date:**", sd.strftime("%m/%d/%Y") if pd.notna(sd) else "N/A")
-            st.write("**End Date:**", ed.strftime("%m/%d/%Y") if pd.notna(ed) else "N/A")
-
-        with c2:
-            st.markdown("#### Unit distribution")
-            # These candidates cover both the canonical names and the observed *_1bed style from the dataset.
-            studio = _get_unit_value(row, ["unit_distribution_studio", "unit_distribution_studios", "studio_units", "studios"])
-            br1 = _get_unit_value(row, ["unit_distribution_1_bedroom", "unit_distribution_1_bedrooms", "unit_distribution_1bed", "unit_distribution_1br"])
-            br2 = _get_unit_value(row, ["unit_distribution_2_bedrooms", "unit_distribution_2_bedroom", "unit_distribution_2bed", "unit_distribution_2br"])
-            br3 = _get_unit_value(row, ["unit_distribution_3_bedrooms", "unit_distribution_3_bedroom", "unit_distribution_3bed", "unit_distribution_3br"])
-            br4 = _get_unit_value(row, ["unit_distribution_4_bedroom", "unit_distribution_4_bedrooms", "unit_distribution_4bed", "unit_distribution_4br", "unit_distribution_4_plus"])
-
-            st.write("**Studio:**", studio)
-            st.write("**1BR:**", br1)
-            st.write("**2BR:**", br2)
-            st.write("**3BR:**", br3)
-            st.write("**4+BR:**", br4)
-
-        with c3:
-            st.markdown("#### Location")
-            st.write("**Zip:**", row.get("postcode", "N/A"))
-            st.write("**Community Board:**", row.get("community_board", "N/A"))
-            st.write("**Latitude:**", row.get("latitude", "N/A"))
-            st.write("**Longitude:**", row.get("longitude", "N/A"))
-
 def fetch_lottery_data() -> pd.DataFrame:
     api_url = "https://data.cityofnewyork.us/resource/vy5i-a666.json"
     params = {"$limit": 5000, "$order": "lottery_end_date DESC"}
     r = requests.get(api_url, params=params, timeout=30)
     r.raise_for_status()
-    df = pd.DataFrame(r.json()) if r.json() else pd.DataFrame()
+    data = r.json()
+    df = pd.DataFrame(data) if data else pd.DataFrame()
 
-    # Parse dates (only known fields; avoid accidentally parsing random strings)
+    # Parse dates
     for col in ["lottery_start_date", "lottery_end_date"]:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
@@ -199,6 +161,12 @@ def fetch_lottery_data() -> pd.DataFrame:
     for col in ["latitude", "longitude", "unit_count", "building_count"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Also coerce any candidate unit distribution columns that exist
+    for label, candidates in UNIT_SIZE_CANDIDATES.items():
+        for c in candidates:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
 
     return df
 
@@ -209,7 +177,7 @@ def enrich_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     out = df.copy()
 
-    # Ensure canonical ID column is numeric-ish (helps joins/filters)
+    # Normalize lottery_id for stable joins/filters
     if "lottery_id" in out.columns:
         out["lottery_id"] = pd.to_numeric(out["lottery_id"], errors="coerce")
 
@@ -262,6 +230,73 @@ def filter_data(
     return f
 
 # ---------------------------
+# List view rendering helpers
+# ---------------------------
+def get_status_class(status: str) -> str:
+    s = (status or "").lower()
+    if "open" in s:
+        return "status-open"
+    if "filled" in s:
+        return "status-filled"
+    return "status-closed"
+
+def display_lottery_card(row: pd.Series) -> None:
+    status_class = get_status_class(str(row.get("lottery_status", "")))
+    start_dt = pd.to_datetime(row.get("lottery_start_date", pd.NaT), errors="coerce")
+    end_dt = pd.to_datetime(row.get("lottery_end_date", pd.NaT), errors="coerce")
+    start_str = start_dt.strftime("%b %d, %Y") if pd.notna(start_dt) else "TBD"
+    end_str = end_dt.strftime("%b %d, %Y") if pd.notna(end_dt) else "TBD"
+
+    st.markdown(
+        f"""
+<div class="lottery-card {status_class}">
+  <h3>🏠 {row.get('lottery_name', 'N/A')}</h3>
+  <p><strong>🆔 Lottery ID:</strong> {row.get('lottery_id', 'N/A')}</p>
+  <p><strong>📍 Borough:</strong> {row.get('borough', 'N/A')}</p>
+  <p><strong>📋 Status:</strong> {row.get('lottery_status', 'N/A')}</p>
+  <p><strong>🏗️ Type:</strong> {row.get('development_type', 'N/A')}</p>
+  <p><strong>🏢 Total Units:</strong> {int(pd.to_numeric(row.get('unit_count', 0), errors='coerce') or 0):,}</p>
+  <p><strong>🛏️ Unit mix:</strong> Studio {int(row.get(NORM_UNIT_COLS['Studio'], 0))}, 1BR {int(row.get(NORM_UNIT_COLS['1BR'], 0))}, 2BR {int(row.get(NORM_UNIT_COLS['2BR'], 0))}, 3BR {int(row.get(NORM_UNIT_COLS['3BR'], 0))}, 4+BR {int(row.get(NORM_UNIT_COLS['4+BR'], 0))}</p>
+  <p><strong>📅 Application Period:</strong> {start_str} – {end_str}</p>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+def display_detailed_lottery_info(row: pd.Series) -> None:
+    title = f"🏠 {row.get('lottery_name', 'N/A')} — {row.get('lottery_status', 'N/A')}"
+    with st.expander(title, expanded=False):
+        c1, c2, c3 = st.columns(3)
+
+        with c1:
+            st.markdown("#### Basic")
+            st.write("**Lottery ID:**", row.get("lottery_id", "N/A"))
+            st.write("**Borough:**", row.get("borough", "N/A"))
+            st.write("**Status:**", row.get("lottery_status", "N/A"))
+            st.write("**Type:**", row.get("development_type", "N/A"))
+            st.write("**Total Units:**", int(pd.to_numeric(row.get("unit_count", 0), errors="coerce") or 0))
+
+            sd = pd.to_datetime(row.get("lottery_start_date", pd.NaT), errors="coerce")
+            ed = pd.to_datetime(row.get("lottery_end_date", pd.NaT), errors="coerce")
+            st.write("**Start Date:**", sd.strftime("%m/%d/%Y") if pd.notna(sd) else "N/A")
+            st.write("**End Date:**", ed.strftime("%m/%d/%Y") if pd.notna(ed) else "N/A")
+
+        with c2:
+            st.markdown("#### Unit distribution (normalized)")
+            st.write("**Studio:**", int(row.get(NORM_UNIT_COLS["Studio"], 0)))
+            st.write("**1BR:**", int(row.get(NORM_UNIT_COLS["1BR"], 0)))
+            st.write("**2BR:**", int(row.get(NORM_UNIT_COLS["2BR"], 0)))
+            st.write("**3BR:**", int(row.get(NORM_UNIT_COLS["3BR"], 0)))
+            st.write("**4+BR:**", int(row.get(NORM_UNIT_COLS["4+BR"], 0)))
+
+        with c3:
+            st.markdown("#### Location")
+            st.write("**Zip:**", row.get("postcode", "N/A"))
+            st.write("**Community Board:**", row.get("community_board", "N/A"))
+            st.write("**Latitude:**", row.get("latitude", "N/A"))
+            st.write("**Longitude:**", row.get("longitude", "N/A"))
+
+# ---------------------------
 # Map
 # ---------------------------
 def create_map(df: pd.DataFrame) -> folium.Map:
@@ -275,7 +310,6 @@ def create_map(df: pd.DataFrame) -> folium.Map:
     if map_df.empty:
         return m
 
-    # Center on filtered points
     center_lat = float(pd.to_numeric(map_df["latitude"], errors="coerce").dropna().mean())
     center_lon = float(pd.to_numeric(map_df["longitude"], errors="coerce").dropna().mean())
     m = folium.Map(location=[center_lat, center_lon], zoom_start=11, tiles="cartodbpositron")
@@ -290,7 +324,13 @@ def create_map(df: pd.DataFrame) -> folium.Map:
             continue
 
         name = row.get("lottery_name", "Housing Lottery")
-        popup = folium.Popup(f"<b>{name}</b><br>Status: {row.get('lottery_status','')}<br>Borough: {row.get('borough','')}<br>Total Units: {row.get('unit_count','')}", max_width=320)
+        popup = folium.Popup(
+            f"<b>{name}</b><br>"
+            f"Status: {row.get('lottery_status','')}<br>"
+            f"Borough: {row.get('borough','')}<br>"
+            f"Total Units: {row.get('unit_count','')}",
+            max_width=320,
+        )
 
         folium.Marker(
             location=[float(lat), float(lon)],
@@ -301,15 +341,12 @@ def create_map(df: pd.DataFrame) -> folium.Map:
 
     return m
 
-def convert_df_to_csv(df: pd.DataFrame) -> bytes:
-    return df.to_csv(index=False).encode("utf-8")
-
 # ---------------------------
-# Unit Distribution Tab (with date presets + slider + trend)
+# Unit Distribution Tab (preset chips + custom calendars + trend)
 # ---------------------------
 def render_unit_distribution_tab(df_enriched: pd.DataFrame) -> None:
     st.markdown("## 🏢 Unit Distribution Analysis")
-    st.caption("Analyze bedroom mix across lotteries (uses the same enriched dataframe as List View).")
+    st.caption("Bedroom mix across lotteries (same enriched dataframe as List View).")
 
     # Filters row (borough / status / type)
     c1, c2, c3 = st.columns(3)
@@ -322,16 +359,14 @@ def render_unit_distribution_tab(df_enriched: pd.DataFrame) -> None:
         types = ["All Types"] + (sorted(df_enriched["development_type"].dropna().unique().tolist()) if "development_type" in df_enriched.columns else [])
         f_type = st.selectbox("Development Type", types, key="ud_type")
 
-    # Apply filters (same logic as List View uses)
-    filtered = filter_data(df_enriched, borough=f_borough, status=f_status, development_type=f_type)
+    filtered = filter_data(df_enriched, borough=f_borough, status=f_status, development_type=f_type, date_field="lottery_start_date")
     if filtered.empty:
-        st.warning('No data available for the selected filters.')
+        st.warning("No data available for the selected filters.")
         return
 
-    # ---- Date controls (preset chips + optional custom calendars) ----
-    st.markdown("#### Date range")
+    # ---- Date controls (chips + optional custom calendars) ----
+    st.markdown("#### Date range (lottery_start_date)")
 
-    # Use lottery_start_date as the time axis
     date_col = "lottery_start_date"
     df_dates = filtered.dropna(subset=[date_col]).copy()
 
@@ -339,7 +374,6 @@ def render_unit_distribution_tab(df_enriched: pd.DataFrame) -> None:
         st.info("No valid lottery_start_date values available for date-based unit distribution.")
         df_time = filtered.copy()
         start_ts = end_ts = None
-        preset = "All time"
     else:
         min_dt = pd.to_datetime(df_dates[date_col], errors="coerce").min()
         max_dt = pd.to_datetime(df_dates[date_col], errors="coerce").max()
@@ -347,84 +381,58 @@ def render_unit_distribution_tab(df_enriched: pd.DataFrame) -> None:
         max_dt = pd.Timestamp(max_dt).normalize() if pd.notna(max_dt) else None
 
         if min_dt is None or max_dt is None:
-            st.info("No valid date range available for lottery_start_date.")
+            st.info("No valid date range available.")
             df_time = filtered.copy()
             start_ts = end_ts = None
-            preset = "All time"
         else:
             presets = ["Last 6 months", "Last 1 year", "Last 3 years", "All time", "Custom"]
-
-            # "Chips" UI: prefer segmented_control if available, else fallback to horizontal radio
             if hasattr(st, "segmented_control"):
-                preset = st.segmented_control("Preset", presets, default=presets[0], key="ud_date_preset_chip")
+                preset = st.segmented_control("Preset", presets, default=presets[0], key="ud_preset")
             else:
-                preset = st.radio("Preset", presets, horizontal=True, index=0, key="ud_date_preset_chip")
+                preset = st.radio("Preset", presets, horizontal=True, index=0, key="ud_preset")
 
-            def _preset_start(p: str, maxd: pd.Timestamp, mind: pd.Timestamp) -> pd.Timestamp:
+            def preset_start(p: str, maxd: pd.Timestamp, mind: pd.Timestamp) -> pd.Timestamp:
                 if p == "Last 6 months":
                     return max(mind, (maxd - pd.DateOffset(months=6)).normalize())
                 if p == "Last 1 year":
                     return max(mind, (maxd - pd.DateOffset(years=1)).normalize())
                 if p == "Last 3 years":
                     return max(mind, (maxd - pd.DateOffset(years=3)).normalize())
-                return mind  # All time
+                return mind
 
             if preset == "Custom":
-                dcol1, dcol2 = st.columns(2)
-                with dcol1:
-                    custom_start = st.date_input(
-                        "Start date (lottery_start_date)",
-                        value=min_dt.date(),
-                        min_value=min_dt.date(),
-                        max_value=max_dt.date(),
-                        key="ud_custom_start",
-                    )
-                with dcol2:
-                    custom_end = st.date_input(
-                        "End date (lottery_start_date)",
-                        value=max_dt.date(),
-                        min_value=min_dt.date(),
-                        max_value=max_dt.date(),
-                        key="ud_custom_end",
-                    )
+                d1, d2 = st.columns(2)
+                with d1:
+                    custom_start = st.date_input("Start date", value=min_dt.date(), min_value=min_dt.date(), max_value=max_dt.date(), key="ud_custom_start")
+                with d2:
+                    custom_end = st.date_input("End date", value=max_dt.date(), min_value=min_dt.date(), max_value=max_dt.date(), key="ud_custom_end")
                 start_ts = pd.Timestamp(custom_start).normalize()
                 end_ts = pd.Timestamp(custom_end).normalize()
                 if start_ts > end_ts:
-                    st.warning("Start date is after end date. Swapping them.")
                     start_ts, end_ts = end_ts, start_ts
             else:
-                start_ts = _preset_start(preset, max_dt, min_dt)
+                start_ts = preset_start(preset, max_dt, min_dt)
                 end_ts = max_dt
 
             df_time = df_dates[(df_dates[date_col] >= start_ts) & (df_dates[date_col] <= end_ts)].copy()
-
-    if start_ts is not None and end_ts is not None:
-
-        st.caption(f"Unit Distribution range: **{start_ts.date()} → {end_ts.date()}** (lottery_start_date)")
+            st.caption(f"Unit Distribution range: **{start_ts.date()} → {end_ts.date()}**")
 
     if df_time.empty:
         st.info("No lotteries match the selected filters/date range.")
         return
 
     # Unit sizes selector (always show all 5)
-    selected_sizes = st.multiselect(
-        "Unit sizes to include",
-        options=UNIT_SIZE_LABELS,
-        default=UNIT_SIZE_LABELS,
-        key="ud_sizes",
-    )
-
+    selected_sizes = st.multiselect("Unit sizes to include", options=UNIT_SIZE_LABELS, default=UNIT_SIZE_LABELS, key="ud_sizes")
     chart_mode = st.radio("Chart view", ["Both", "Pie", "Bar"], horizontal=True, key="ud_chart_mode")
     include_zeros = st.checkbox("Include zero categories in charts", value=False, key="ud_include_zeros")
 
     # Summary totals using normalized columns
-    totals = []
+    summary_rows = []
     for label in selected_sizes:
         norm_col = NORM_UNIT_COLS[label]
-        totals.append(float(df_time[norm_col].sum()))
+        summary_rows.append({"Unit Size": label, "Units": float(df_time[norm_col].sum())})
 
-    summary_df = pd.DataFrame({"Unit Size": selected_sizes, "Units": totals})
-    # Friendly order
+    summary_df = pd.DataFrame(summary_rows)
     order = {"Studio": 0, "1BR": 1, "2BR": 2, "3BR": 3, "4+BR": 4}
     summary_df["__o"] = summary_df["Unit Size"].map(lambda x: order.get(x, 99))
     summary_df = summary_df.sort_values("__o").drop(columns="__o").reset_index(drop=True)
@@ -463,10 +471,7 @@ def render_unit_distribution_tab(df_enriched: pd.DataFrame) -> None:
 
         y_cols = [NORM_UNIT_COLS[s] for s in selected_sizes]
         grouped = trend.groupby("period")[y_cols].sum().reset_index()
-
-        # Rename back to friendly labels for plotting legend
-        rename = {NORM_UNIT_COLS[s]: s for s in selected_sizes}
-        grouped = grouped.rename(columns=rename)
+        grouped = grouped.rename(columns={NORM_UNIT_COLS[s]: s for s in selected_sizes})
 
         if len(grouped) < 2:
             st.info("Not enough time periods in the current range to show a trend.")
@@ -475,7 +480,6 @@ def render_unit_distribution_tab(df_enriched: pd.DataFrame) -> None:
             fig_line.update_layout(xaxis_title="Month", yaxis_title="Units", xaxis_tickangle=-45)
             st.plotly_chart(fig_line, width="stretch")
 
-            # Optional: show share (mix) trend
             share = grouped.copy()
             share_total = share[selected_sizes].sum(axis=1).replace({0: pd.NA})
             for s in selected_sizes:
@@ -486,7 +490,7 @@ def render_unit_distribution_tab(df_enriched: pd.DataFrame) -> None:
                 fig_share.update_layout(xaxis_title="Month", yaxis_title="Share (%)", xaxis_tickangle=-45)
                 st.plotly_chart(fig_share, width="stretch")
 
-    # ---- Detailed table (uses normalized columns, so values match List View) ----
+    # ---- Detailed table ----
     st.markdown("### Detailed Data")
     base_cols = [c for c in ["lottery_id", "lottery_name", "borough", "lottery_status", "development_type", "unit_count"] if c in df_time.columns]
     detail = df_time[base_cols].copy()
@@ -516,7 +520,7 @@ def main() -> None:
         st.error("Unable to load lottery data.")
         return
 
-    # Global filters (used for Map + List)
+    # Global filters (Map + List)
     st.markdown("### 🔍 Filter Lotteries")
     col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
 
@@ -530,7 +534,15 @@ def main() -> None:
     with col4:
         end_date = st.date_input("To Date", value=(datetime.now() + timedelta(days=180)).date(), key="main_end")
 
-    filtered_df = filter_data(df, borough=selected_borough, status=selected_status, start_date=start_date, end_date=end_date, date_field="lottery_start_date")
+    filtered_df = filter_data(
+        df,
+        borough=selected_borough,
+        status=selected_status,
+        start_date=start_date,
+        end_date=end_date,
+        development_type=None,
+        date_field="lottery_start_date",
+    )
 
     tab1, tab2, tab3 = st.tabs(["🗺️ Map View", "📋 List View", "🏢 Unit Distribution"])
 
@@ -541,7 +553,7 @@ def main() -> None:
         else:
             st_folium(create_map(filtered_df), height=520)
 
-        with tab2:
+    with tab2:
         st.markdown("### Housing Lottery Calendar")
         st.markdown("Browse lotteries in **Card**, **Detailed**, or **Table** view. All views use the same enriched dataframe.")
 
@@ -571,13 +583,10 @@ def main() -> None:
             if view_mode == "Card View":
                 for _, row in page_df.iterrows():
                     display_lottery_card(row)
-
             elif view_mode == "Detailed View":
                 for _, row in page_df.iterrows():
                     display_detailed_lottery_info(row)
-
             else:
-                # Table View (keep raw columns visible; it's the best for troubleshooting)
                 st.dataframe(page_df, width="stretch", height=420)
 
             st.caption(f"Showing {start_idx + 1}-{min(end_idx, len(sorted_df))} of {len(sorted_df)} lotteries")
@@ -590,7 +599,6 @@ def main() -> None:
                 mime="text/csv",
                 key="download_all",
             )
-
 
     with tab3:
         render_unit_distribution_tab(df)
