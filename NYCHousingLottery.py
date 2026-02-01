@@ -273,6 +273,97 @@ def enrich_and_normalize(df: pd.DataFrame, overrides: Optional[pd.DataFrame] = N
     out = _ensure_unit_columns_exist(out)
     out = _coerce_unit_cols_numeric(out)
 
+    # ------------------------------------------------------------------
+    # 1) Normalize *alternate* NYC Open Data schemas into the canonical
+    #    unit_distribution_* columns used everywhere in the app.
+    #
+    # Why: the API sometimes returns columns like `unit_distribution_1bed`
+    # instead of `unit_distribution_1_bedroom`. If we don't fold these
+    # alternates in, charts/tabs that rely on canonical columns will show
+    # zeros (or only Studio), even though the data is present.
+    # ------------------------------------------------------------------
+
+    UNIT_ALT_MAP: Dict[str, List[str]] = {
+        "unit_distribution_studio": [
+            "unit_distribution_studio",
+            "unit_distribution_studios",
+            "studio_units",
+            "studios",
+            "unit_distribution_stu",
+        ],
+        "unit_distribution_1_bedroom": [
+            "unit_distribution_1_bedroom",
+            "unit_distribution_1_bedrooms",
+            "unit_distribution_1bed",
+            "unit_distribution_1_bed",
+            "unit_distribution_1br",
+            "one_bedroom_units",
+            "1_bedroom_units",
+        ],
+        "unit_distribution_2_bedrooms": [
+            "unit_distribution_2_bedrooms",
+            "unit_distribution_2_bedroom",
+            "unit_distribution_2bed",
+            "unit_distribution_2_bed",
+            "unit_distribution_2br",
+            "two_bedroom_units",
+            "2_bedroom_units",
+        ],
+        "unit_distribution_3_bedrooms": [
+            "unit_distribution_3_bedrooms",
+            "unit_distribution_3_bedroom",
+            "unit_distribution_3bed",
+            "unit_distribution_3_bed",
+            "unit_distribution_3br",
+            "three_bedroom_units",
+            "3_bedroom_units",
+        ],
+        "unit_distribution_4_bedroom": [
+            "unit_distribution_4_bedroom",
+            "unit_distribution_4_bedrooms",
+            "unit_distribution_4bed",
+            "unit_distribution_4_bed",
+            "unit_distribution_4br",
+            "unit_distribution_4_plus",
+            "four_bedroom_units",
+            "4_bedroom_units",
+        ],
+    }
+
+    # Build lowercase lookup -> actual column name for robust matching
+    col_lookup = {c.lower(): c for c in out.columns}
+
+    for canonical, candidates in UNIT_ALT_MAP.items():
+        canonical_actual = col_lookup.get(canonical.lower())
+        if not canonical_actual:
+            # ensure canonical exists (should already), but be safe
+            out[canonical] = 0
+            canonical_actual = canonical
+
+        # Find the first alternate candidate that exists (excluding canonical itself)
+        alt_actual: Optional[str] = None
+        for cand in candidates:
+            if cand.lower() == canonical.lower():
+                continue
+            if cand.lower() in col_lookup:
+                alt_actual = col_lookup[cand.lower()]
+                break
+
+        if not alt_actual:
+            continue
+
+        # Coerce alt numeric
+        alt_vals = pd.to_numeric(out[alt_actual], errors="coerce")
+
+        # Fill canonical values when missing OR equal to 0 while alt is > 0
+        can_vals = pd.to_numeric(out[canonical_actual], errors="coerce")
+        mask = (can_vals.isna() | (can_vals.fillna(0) == 0)) & (alt_vals.fillna(0) > 0)
+        if mask.any():
+            out.loc[mask, canonical_actual] = alt_vals.loc[mask]
+
+    # Re-coerce canonical unit columns (now that we may have copied values)
+    out = _coerce_unit_cols_numeric(out)
+
     if overrides is not None and not overrides.empty:
         o = _standardize_overrides_columns(overrides)
         out = out.merge(o, on="lottery_id", how="left")
