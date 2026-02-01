@@ -235,63 +235,87 @@ def render_unit_distribution_tab(df_enriched: pd.DataFrame) -> None:
         types = ["All Types"] + (sorted(df_enriched["development_type"].dropna().unique().tolist()) if "development_type" in df_enriched.columns else [])
         f_type = st.selectbox("Development Type", types, key="ud_type")
 
-    # ---- Date controls (preset + slider) ----
-    st.markdown("### Date range")
-    dcol1, dcol2 = st.columns([1, 3])
-    with dcol1:
-        preset = st.selectbox(
-            "Preset",
-            ["All time", "Last 6 months", "Last 1 year", "Last 3 years"],
-            key="ud_date_preset",
-        )
+    # Apply filters (same logic as List View uses)
+    filtered = filter_data(df_enriched, borough=f_borough, status=f_status, development_type=f_type)
+    if filtered.empty:
+        st.warning('No data available for the selected filters.')
+        return
 
-    # Determine min/max for slider from available start dates
-    if "lottery_start_date" in df_enriched.columns:
-        dt_series = df_enriched["lottery_start_date"].dropna()
-    else:
-        dt_series = pd.Series([], dtype="datetime64[ns]")
-    if dt_series.empty:
-        st.warning("No lottery_start_date values available; date filtering disabled for Unit Distribution.")
-        df_base = filter_data(df_enriched, borough=f_borough, status=f_status, development_type=f_type)
-    else:
-        min_dt = dt_series.min().date()
-        max_dt = dt_series.max().date()
-        today = datetime.now().date()
+    # ---- Date controls (preset chips + optional custom calendars) ----
+    st.markdown("#### Date range")
 
-        # preset -> default slider values
-        if preset == "Last 6 months":
-            default_start = max(min_dt, (today - timedelta(days=183)))
-            default_end = min(max_dt, today)
-        elif preset == "Last 1 year":
-            default_start = max(min_dt, (today - timedelta(days=365)))
-            default_end = min(max_dt, today)
-        elif preset == "Last 3 years":
-            default_start = max(min_dt, (today - timedelta(days=365 * 3)))
-            default_end = min(max_dt, today)
+    # Use lottery_start_date as the time axis
+    date_col = "lottery_start_date"
+    df_dates = filtered.dropna(subset=[date_col]).copy()
+
+    if df_dates.empty:
+        st.info("No valid lottery_start_date values available for date-based unit distribution.")
+        df_time = filtered.copy()
+        start_ts = end_ts = None
+        preset = "All time"
+    else:
+        min_dt = pd.to_datetime(df_dates[date_col], errors="coerce").min()
+        max_dt = pd.to_datetime(df_dates[date_col], errors="coerce").max()
+        min_dt = pd.Timestamp(min_dt).normalize() if pd.notna(min_dt) else None
+        max_dt = pd.Timestamp(max_dt).normalize() if pd.notna(max_dt) else None
+
+        if min_dt is None or max_dt is None:
+            st.info("No valid date range available for lottery_start_date.")
+            df_time = filtered.copy()
+            start_ts = end_ts = None
+            preset = "All time"
         else:
-            default_start, default_end = min_dt, max_dt
+            presets = ["Last 6 months", "Last 1 year", "Last 3 years", "All time", "Custom"]
 
-        with dcol2:
-            start_end = st.slider(
-                "Custom range (by lottery start date)",
-                min_value=min_dt,
-                max_value=max_dt,
-                value=(default_start, default_end),
-                key="ud_date_slider",
-            )
+            # "Chips" UI: prefer segmented_control if available, else fallback to horizontal radio
+            if hasattr(st, "segmented_control"):
+                preset = st.segmented_control("Preset", presets, default=presets[0], key="ud_date_preset_chip")
+            else:
+                preset = st.radio("Preset", presets, horizontal=True, index=0, key="ud_date_preset_chip")
 
-        df_base = filter_data(
-            df_enriched,
-            borough=f_borough,
-            status=f_status,
-            development_type=f_type,
-            start_date=start_end[0],
-            end_date=start_end[1],
-            date_field="lottery_start_date",
-        )
-        st.caption(f"Unit Distribution range: **{start_end[0]} → {start_end[1]}** (lottery_start_date)")
+            def _preset_start(p: str, maxd: pd.Timestamp, mind: pd.Timestamp) -> pd.Timestamp:
+                if p == "Last 6 months":
+                    return max(mind, (maxd - pd.DateOffset(months=6)).normalize())
+                if p == "Last 1 year":
+                    return max(mind, (maxd - pd.DateOffset(years=1)).normalize())
+                if p == "Last 3 years":
+                    return max(mind, (maxd - pd.DateOffset(years=3)).normalize())
+                return mind  # All time
 
-    if df_base.empty:
+            if preset == "Custom":
+                dcol1, dcol2 = st.columns(2)
+                with dcol1:
+                    custom_start = st.date_input(
+                        "Start date (lottery_start_date)",
+                        value=min_dt.date(),
+                        min_value=min_dt.date(),
+                        max_value=max_dt.date(),
+                        key="ud_custom_start",
+                    )
+                with dcol2:
+                    custom_end = st.date_input(
+                        "End date (lottery_start_date)",
+                        value=max_dt.date(),
+                        min_value=min_dt.date(),
+                        max_value=max_dt.date(),
+                        key="ud_custom_end",
+                    )
+                start_ts = pd.Timestamp(custom_start).normalize()
+                end_ts = pd.Timestamp(custom_end).normalize()
+                if start_ts > end_ts:
+                    st.warning("Start date is after end date. Swapping them.")
+                    start_ts, end_ts = end_ts, start_ts
+            else:
+                start_ts = _preset_start(preset, max_dt, min_dt)
+                end_ts = max_dt
+
+            df_time = df_dates[(df_dates[date_col] >= start_ts) & (df_dates[date_col] <= end_ts)].copy()
+
+    if start_ts is not None and end_ts is not None:
+
+        st.caption(f"Unit Distribution range: **{start_ts.date()} → {end_ts.date()}** (lottery_start_date)")
+
+    if df_time.empty:
         st.info("No lotteries match the selected filters/date range.")
         return
 
@@ -310,7 +334,7 @@ def render_unit_distribution_tab(df_enriched: pd.DataFrame) -> None:
     totals = []
     for label in selected_sizes:
         norm_col = NORM_UNIT_COLS[label]
-        totals.append(float(df_base[norm_col].sum()))
+        totals.append(float(df_time[norm_col].sum()))
 
     summary_df = pd.DataFrame({"Unit Size": selected_sizes, "Units": totals})
     # Friendly order
@@ -344,10 +368,10 @@ def render_unit_distribution_tab(df_enriched: pd.DataFrame) -> None:
 
     # ---- Trend shifts over time (monthly) ----
     st.markdown("### 📈 Trend shifts over time")
-    if "lottery_start_date" not in df_base.columns or df_base["lottery_start_date"].dropna().empty:
+    if "lottery_start_date" not in df_time.columns or df_time["lottery_start_date"].dropna().empty:
         st.info("No lottery_start_date values available to plot trends.")
     else:
-        trend = df_base.dropna(subset=["lottery_start_date"]).copy()
+        trend = df_time.dropna(subset=["lottery_start_date"]).copy()
         trend["period"] = trend["lottery_start_date"].dt.to_period("M").astype(str)
 
         y_cols = [NORM_UNIT_COLS[s] for s in selected_sizes]
@@ -377,10 +401,10 @@ def render_unit_distribution_tab(df_enriched: pd.DataFrame) -> None:
 
     # ---- Detailed table (uses normalized columns, so values match List View) ----
     st.markdown("### Detailed Data")
-    base_cols = [c for c in ["lottery_id", "lottery_name", "borough", "lottery_status", "development_type", "unit_count"] if c in df_base.columns]
-    detail = df_base[base_cols].copy()
+    base_cols = [c for c in ["lottery_id", "lottery_name", "borough", "lottery_status", "development_type", "unit_count"] if c in df_time.columns]
+    detail = df_time[base_cols].copy()
     for label in UNIT_SIZE_LABELS:
-        detail[f"{label} Units"] = df_base[NORM_UNIT_COLS[label]].astype(int)
+        detail[f"{label} Units"] = df_time[NORM_UNIT_COLS[label]].astype(int)
 
     st.dataframe(detail, width="stretch", height=350)
     st.download_button(
